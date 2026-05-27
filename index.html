@@ -1416,25 +1416,25 @@ async function loadData() {
   }
 }
 
-function saveData() {
+async function saveData() {
   // บันทึกทุกอย่างขึ้น Firebase
   try {
-    dbRef.settings().set(settings);
+    await dbRef.settings().set(settings);
 
     // บันทึก NCR list เป็น object (key = NCR ID)
     const ncrObj = {};
     ncrList.forEach(n => {
       if (n && n.id) ncrObj[n.id.replace(/\//g, '_')] = n;
     });
-    dbRef.ncrList().set(ncrObj);
+    await dbRef.ncrList().set(ncrObj);
 
     // บันทึก BP Names
-    dbRef.bpNames().set(BP_NAMES);
+    await dbRef.bpNames().set(BP_NAMES);
 
     // บันทึก signatures
     const sigStore = {};
     Object.keys(signatures).forEach(k => { sigStore[k.replace(/ /g,'_SIG_')] = signatures[k]; });
-    dbRef.signatures().set(sigStore);
+    await dbRef.signatures().set(sigStore);
   } catch(e) {
     console.error('saveData (Firebase) error:', e);
     alert('บันทึกข้อมูลไม่สำเร็จ: ' + e.message);
@@ -1680,6 +1680,7 @@ function initForm() {
   const _mm = String(_d.getMonth()+1).padStart(2,'0');
   const _yyyy = _d.getFullYear();
   document.getElementById('doc-date').value = _dd+'/'+_mm+'/'+_yyyy;
+  document.getElementById('doc-date-picker').value = _yyyy + '-' + _mm + '-' + _dd;
   // Generate doc number
   generateDocNumber();
   populateSelects();
@@ -1727,8 +1728,14 @@ function generateDocNumber() {
     const idYr = n.id.split('/')[1];
     return idPrefix === prefix && idYr === yr;
   }).length;
-  const seq = String(count + 1).padStart(3,'0');
-  document.getElementById('doc-number').value = `${prefix}${seq}/${yr}`;
+  // ตรวจสอบ uniqueness — ถ้า ID ซ้ำ ให้เพิ่มลำดับจนไม่ซ้ำ
+  let seq = count + 1;
+  let candidate = `${prefix}${String(seq).padStart(3,'0')}/${yr}`;
+  while (ncrList.some(n => n.id === candidate)) {
+    seq++;
+    candidate = `${prefix}${String(seq).padStart(3,'0')}/${yr}`;
+  }
+  document.getElementById('doc-number').value = candidate;
 }
 
 function populateSelects() {
@@ -1912,7 +1919,7 @@ async function saveNCR() {
   const defect = document.getElementById('defect-detail').value.trim();
   if (!bp) { alert('กรุณาระบุบริษัท/หน่วยงาน'); return; }
   if (!defect) { alert('กรุณาระบุรายละเอียดข้อบกพร่อง'); return; }
-  // Bug #6: Validate date
+  // Validate date format DD/MM/YYYY
   const dateVal = document.getElementById('doc-date').value;
   if (dateVal) {
     const dp = dateVal.split('/');
@@ -1981,6 +1988,7 @@ function clearForm() {
   uploadedImages = [];
   const _dc = new Date();
   document.getElementById('doc-date').value = String(_dc.getDate()).padStart(2,'0')+'/'+String(_dc.getMonth()+1).padStart(2,'0')+'/'+_dc.getFullYear();
+  document.getElementById('doc-date-picker').value = _dc.getFullYear() + '-' + String(_dc.getMonth()+1).padStart(2,'0') + '-' + String(_dc.getDate()).padStart(2,'0');
   generateDocNumber();
   ['bp-input','subject','nc-name','product-code-input','ref-doc','defect-detail','root-cause',
    'action-other-text','action-start-date','action-duration','audit-date',
@@ -1997,6 +2005,12 @@ function toggleOtherAction(cb) {
   document.getElementById('action-other-text').style.display = cb.checked ? 'block' : 'none';
 }
 
+// ==================== ESCAPE HTML (XSS PREVENTION) ====================
+function escapeHTML(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
 // ==================== LIST ====================
 function renderList() {
   const q = (document.getElementById('search-input')?.value || '').toLowerCase();
@@ -2008,7 +2022,7 @@ function renderList() {
     if (deptF && n.dept !== deptF) return false;
     if (q && !(n.id+n.bp+n.subject+n.productCode+n.reporter+n.dept).toLowerCase().includes(q)) return false;
     return true;
-  }).reverse();
+  }).sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
 
   const tbody = document.getElementById('list-tbody');
   const empty = document.getElementById('list-empty');
@@ -2020,14 +2034,14 @@ function renderList() {
   empty.style.display = 'none';
   tbody.innerHTML = filtered.map((n, i) => `
     <tr>
-      <td><span class="ncr-id">${n.id}</span></td>
-      <td>${n.date || '-'}</td>
-      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n.bp}</td>
-      <td>${n.dept || '-'}</td>
-      <td><span class="mono">${n.productCode || '-'}</span></td>
-      <td>${n.reporter || '-'}</td>
+      <td><span class="ncr-id">${escapeHTML(n.id)}</span></td>
+      <td>${escapeHTML(n.date) || '-'}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHTML(n.bp)}</td>
+      <td>${escapeHTML(n.dept) || '-'}</td>
+      <td><span class="mono">${escapeHTML(n.productCode) || '-'}</span></td>
+      <td>${escapeHTML(n.reporter) || '-'}</td>
       <td>${statusBadge(n.status)}</td>
-      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n.remark || '-'}</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHTML(n.remark) || '-'}</td>
       <td>
         <div style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-info btn-xs" onclick="viewNCR(${ncrList.indexOf(n)})">ดู</button>
@@ -2069,13 +2083,13 @@ function updateDashboard() {
 
   // Recent 5
   const tbody = document.getElementById('dashboard-tbody');
-  const recent = [...ncrList].reverse().slice(0,5);
+  const recent = [...ncrList].sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || '')).slice(0,5);
   tbody.innerHTML = recent.length ? recent.map(n => `
     <tr>
-      <td><span class="ncr-id">${n.id}</span></td>
-      <td>${n.date || '-'}</td>
-      <td>${n.bp}</td>
-      <td>${n.subject || '-'}</td>
+      <td><span class="ncr-id">${escapeHTML(n.id)}</span></td>
+      <td>${escapeHTML(n.date) || '-'}</td>
+      <td>${escapeHTML(n.bp)}</td>
+      <td>${escapeHTML(n.subject) || '-'}</td>
       <td>${statusBadge(n.status)}</td>
       <td><button class="btn btn-info btn-xs" onclick="viewNCR(${ncrList.indexOf(n)})">ดู</button></td>
     </tr>
@@ -2105,7 +2119,7 @@ function viewNCR(idx) {
   `;
 
   document.getElementById('modal-title').innerHTML = `
-    <span>NCR: <span class="ncr-id" style="font-size:1rem">${n.id}</span></span>
+    <span>NCR: <span class="ncr-id" style="font-size:1rem">${escapeHTML(n.id)}</span></span>
     <span style="margin-left:12px">${statusBadge(n.status)}</span>
   `;
 
@@ -2273,7 +2287,7 @@ function viewNCR(idx) {
         <div class="form-group">
           <label>ผู้ตรวจ</label>
           <select id="modal-auditor">
-            ${(settings.reviewers||[]).map(r=>`<option value="${r}" ${n.auditor===r?'selected':''}>${r}</option>`).join('')}
+            ${[...settings.reporters, ...settings.reviewers].filter((v,i,a)=>a.indexOf(v)===i).map(r=>`<option value="${r}" ${n.auditor===r?'selected':''}>${r}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -2340,7 +2354,11 @@ function switchStep(num) {
 
 async function saveStep2(idx) {
   const n = ncrList[idx];
-  n.supplierReplyDate = document.getElementById('modal-supplier-date').value;
+  const replyDate = document.getElementById('modal-supplier-date').value;
+  const replyText = document.getElementById('modal-supplier-reply').value;
+  if (!replyDate) { alert('กรุณาระบุวันที่ตอบกลับ'); return; }
+  if (!replyText.trim()) { alert('กรุณาระบุสาเหตุของปัญหา (Root Cause)'); return; }
+  n.supplierReplyDate = replyDate;
   n.supplierPerson    = document.getElementById('modal-supplier-person').value;
   n.supplierPosition  = document.getElementById('modal-supplier-position').value;
   n.actionStartDate   = document.getElementById('modal-action-start-date').value;
@@ -2365,7 +2383,9 @@ async function saveStep2(idx) {
 
 async function saveStep3(idx) {
   const n = ncrList[idx];
-  n.auditResult     = document.getElementById('modal-audit-result').value;
+  const auditResult = document.getElementById('modal-audit-result').value;
+  if (!auditResult.trim()) { alert('กรุณาระบุผลการตรวจติดตาม'); return; }
+  n.auditResult     = auditResult;
   n.auditor         = document.getElementById('modal-auditor').value;
   n.auditorSignDate = document.getElementById('modal-auditor-sign-date').value;
   n.updatedAt = new Date().toISOString();
@@ -2377,6 +2397,9 @@ async function saveStep3(idx) {
 async function saveStep4(idx) {
   const n = ncrList[idx];
   const result = document.querySelector('input[name="closure-result"]:checked');
+  const closureDate = document.getElementById('modal-closure-date').value;
+  if (!result) { alert('กรุณาเลือกผลสรุปการปิด NCR (ยอมรับ/ไม่ยอมรับ)'); return; }
+  if (!closureDate) { alert('กรุณาระบุวันที่ปิด NCR'); return; }
   n.closureResult  = result ? result.value : '';
   n.closureRejectNo= document.getElementById('closure-reject-no').value;
   n.qmr            = document.getElementById('modal-qmr').value;
@@ -2389,7 +2412,7 @@ async function saveStep4(idx) {
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
   // Re-render modal title with updated status badge
   document.getElementById('modal-title').innerHTML = `
-    <span>NCR: <span class="ncr-id" style="font-size:1rem">${n.id}</span></span>
+    <span>NCR: <span class="ncr-id" style="font-size:1rem">${escapeHTML(n.id)}</span></span>
     <span style="margin-left:12px">${statusBadge(n.status)}</span>
   `;
 }
@@ -2426,7 +2449,7 @@ function editNCR(idx) {
   const n = ncrList[idx];
   editingIndex = idx;
   showPage('new-ncr');
-  // Bug #7: Update page title to indicate edit mode
+  // Update page title to indicate edit mode
   const pageTitle = document.querySelector('#page-new-ncr .page-title');
   const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
   if (pageTitle) pageTitle.textContent = '✏️ แก้ไข NCR';
@@ -2529,14 +2552,6 @@ function buildCurrentNCR() {
 
 function openPrintModal(n) {
   currentPrintData = n;
-  // Debug: แสดง supplierReply ใน console
-  console.log('openPrintModal data:', {
-    id: n.id,
-    rootCause: n.rootCause,
-    supplierReply: n.supplierReply,
-    supplierCA: n.supplierCA,
-    supplierReplyDate: n.supplierReplyDate
-  });
   document.getElementById('print-body').innerHTML = buildNCRFormHTML(n);
   document.getElementById('print-modal').classList.add('show');
 }
@@ -2552,7 +2567,7 @@ function buildNCRFormHTML(n) {
     });
   }
   const statusLabel = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
-  const line = (v) => v || '';
+  const line = (v) => escapeHTML(v) || '';
   // ลายเซ็นดิจิตอล
   const sigImg = (name, w=200) => {
     const src = signatures[name];
