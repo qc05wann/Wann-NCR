@@ -847,10 +847,79 @@
   </div>
 
 
+  <!-- Section 6: Root Cause -->
+  <div class="card">
+    <div class="section-label">สาเหตุของปัญหา</div>
+    <div class="form-group">
+      <label>สาเหตุของปัญหา (Root Cause)</label>
+      <textarea id="root-cause" rows="3" placeholder="ระบุสาเหตุของปัญหา (ถ้ามี)..."></textarea>
+    </div>
+  </div>
 
+  <!-- Section 7: Corrective Action -->
+  <div class="card">
+    <div class="section-label">รายละเอียดการแก้ไข</div>
+    <div class="form-group">
+      <label>ประเภทการดำเนินการ</label>
+      <div class="checkbox-group">
+        <label class="checkbox-item"><input type="checkbox" id="action-return"><span>ส่งคืน (Return)</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="action-special"><span>เจรจาต่อกรณีพิเศษ</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="action-rework"><span>ทำการแก้ไข (Rework)</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="action-destroy"><span>ทำลาย (Destroy)</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="action-other" onchange="toggleOtherAction(this)"><span>อื่นๆ</span></label>
+      </div>
+      <input type="text" id="action-other-text" placeholder="ระบุการดำเนินการอื่นๆ..." style="display:none;margin-top:8px">
+    </div>
+    <div class="form-grid form-grid-2" style="margin-top:14px">
+      <div class="form-group">
+        <label>วันที่เริ่มดำเนินการ</label>
+        <input type="date" id="action-start-date">
+      </div>
+      <div class="form-group">
+        <label>ระยะเวลาดำเนินการ</label>
+        <input type="text" id="action-duration" placeholder="เช่น 7 วัน / 2 สัปดาห์">
+      </div>
+    </div>
+  </div>
 
+  <!-- Section 8: Audit -->
+  <div class="card">
+    <div class="section-label">การตรวจติดตามผล</div>
+    <div class="form-grid form-grid-2">
+      <div class="form-group">
+        <label>กำหนดวันตรวจติดตาม</label>
+        <input type="date" id="audit-date">
+      </div>
+      <div class="form-group">
+        <label>ผู้ตรวจ</label>
+        <select id="auditor-select"></select>
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:14px">
+      <label>ผลการตรวจติดตาม</label>
+      <textarea id="audit-result" rows="3" placeholder="บันทึกผลการตรวจติดตาม..."></textarea>
+    </div>
+  </div>
 
-
+  <!-- Section 9: Status & Remark -->
+  <div class="card">
+    <div class="section-label">สถานะและหมายเหตุ</div>
+    <div class="form-grid form-grid-2">
+      <div class="form-group">
+        <label>สถานะ</label>
+        <select id="ncr-status">
+          <option value="open">🔴 เปิดใหม่</option>
+          <option value="waiting-reply">🟡 รอตอบกลับ</option>
+          <option value="waiting-audit">🔵 รอตรวจติดตาม</option>
+          <option value="closed">🟢 ปิดแล้ว</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>หมายเหตุ</label>
+        <textarea id="remark" rows="2" placeholder="หมายเหตุเพิ่มเติม..."></textarea>
+      </div>
+    </div>
+  </div>
 
   <!-- Section 12: Images -->
   <div class="card">
@@ -1863,12 +1932,12 @@ function clearForm() {
   generateDocNumber();
   ['bp-input','subject','nc-name','product-code-input','ref-doc','defect-detail','root-cause',
    'action-other-text','action-start-date','action-duration','audit-date',
-   'audit-result','remark'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('nc-type').value = '';
-  document.getElementById('dept-select').value = '';
-  document.getElementById('ncr-status').value = 'open';
-  ['action-return','action-special','action-rework','action-destroy','action-other'].forEach(id => document.getElementById(id).checked = false);
-  document.getElementById('action-other-text').style.display = 'none';
+   'audit-result','remark'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const ncTypeEl = document.getElementById('nc-type'); if (ncTypeEl) ncTypeEl.value = '';
+  const deptEl = document.getElementById('dept-select'); if (deptEl) deptEl.value = '';
+  const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'open';
+  ['action-return','action-special','action-rework','action-destroy','action-other'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
+  const otEl = document.getElementById('action-other-text'); if (otEl) otEl.style.display = 'none';
   renderImageGrid();
 }
 
@@ -2306,34 +2375,38 @@ function editNCR(idx) {
   editingIndex = idx;
   showPage('new-ncr');
   setTimeout(() => {
-    document.getElementById('doc-number').value = n.id;
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+    setVal('doc-number', n.id);
     document.getElementById('doc-type').value = n.id && n.id.startsWith('NCRW') ? 'NCRW' : 'NCR';
-    document.getElementById('doc-date').value = n.date || '';
-    document.getElementById('nc-type').value = n.ncType || '';
-    document.getElementById('bp-input').value = n.bp || '';
-    document.getElementById('dept-select').value = n.dept || '';
-    document.getElementById('subject').value = n.subject || '';
-    document.getElementById('product-code-input').value = n.productCode || '';
-    document.getElementById('defect-detail').value = n.defectDetail || '';
-    document.getElementById('root-cause').value = n.rootCause || '';
-    document.getElementById('action-return').checked = n.actionReturn || false;
-    document.getElementById('action-special').checked = n.actionSpecial || false;
-    document.getElementById('action-rework').checked = n.actionRework || false;
-    document.getElementById('action-destroy').checked = n.actionDestroy || false;
+    setVal('doc-date', n.date);
+    setVal('nc-type', n.ncType);
+    setVal('bp-input', n.bp);
+    setVal('dept-select', n.dept);
+    setVal('subject', n.subject);
+    setVal('product-code-input', n.productCode);
+    setVal('defect-detail', n.defectDetail);
+    setVal('root-cause', n.rootCause);
+    setChk('action-return', n.actionReturn);
+    setChk('action-special', n.actionSpecial);
+    setChk('action-rework', n.actionRework);
+    setChk('action-destroy', n.actionDestroy);
     if (n.actionOther) {
-      document.getElementById('action-other').checked = true;
-      document.getElementById('action-other-text').style.display = 'block';
-      document.getElementById('action-other-text').value = n.actionOther;
+      setChk('action-other', true);
+      const otEl = document.getElementById('action-other-text');
+      if (otEl) { otEl.style.display = 'block'; otEl.value = n.actionOther; }
     }
-    document.getElementById('action-start-date').value = n.actionStartDate || '';
-    document.getElementById('action-duration').value = n.actionDuration || '';
-    document.getElementById('audit-date').value = n.auditDate || '';
-    document.getElementById('audit-result').value = n.auditResult || '';
-    document.getElementById('reporter-select').value = n.reporter || '';
-    document.getElementById('reviewer-select').value = n.reviewer || '';
-    document.getElementById('auditor-select').value = n.auditor || '';
-    document.getElementById('ncr-status').value = n.status || 'open';
-    document.getElementById('remark').value = n.remark || '';
+    setVal('action-start-date', n.actionStartDate);
+    setVal('action-duration', n.actionDuration);
+    setVal('audit-date', n.auditDate);
+    setVal('audit-result', n.auditResult);
+    setVal('reporter-select', n.reporter);
+    setVal('reviewer-select', n.reviewer);
+    setVal('auditor-select', n.auditor);
+    setVal('ncr-status', n.status || 'open');
+    setVal('remark', n.remark);
+    setVal('ref-doc', n.refDoc);
+    setVal('nc-name', n.ncName);
     uploadedImages = n.images ? [...n.images] : [];
     renderImageGrid();
   }, 100);
@@ -3052,101 +3125,135 @@ document.querySelectorAll('.modal-overlay').forEach(o => {
   o.addEventListener('click', e => { if(e.target===o) o.classList.remove('show'); });
 });
 
-function printNCRForm() {
-  if (!currentPrintData) return;
-  const html = buildNCRFormHTML(currentPrintData);
-  const win = window.open('', '_blank', 'width=900,height=700');
-  win.document.write(`<!DOCTYPE html><html><head>
-    <meta charset="UTF-8">
-    <title>NCR Form - ${currentPrintData?.id}</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-      body { margin: 0; font-family: 'Sarabun', sans-serif; }
-      @page { size: A4; margin: 12mm; }
-      @media print { body { margin: 0; } .page-break { page-break-before: always; } }
-    </style>
-  </head><body>${html}<script>window.onload=()=>setTimeout(()=>{window.print();},600)<\/script><\/body><\/html>`);
-  win.document.close();
+// ==================== EXPORT MODAL ====================
+function openExportModal() {
+  updateExportCount();
+  document.getElementById('export-modal').classList.add('show');
 }
 
-function printReport() {
-  const n = currentPrintData;
-  const statusLabel = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
-  const win = window.open('', '_blank', 'width=900,height=700');
-  win.document.write(`<!DOCTYPE html><html><head>
-    <meta charset="UTF-8">
-    <title>NCR Report - ${n.id}</title>
-    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-      body { margin: 30px; font-family: 'Sarabun', sans-serif; color: #1a1a2e; }
-      h1 { color: #c00; border-bottom: 3px solid #c00; padding-bottom: 8px; }
-      .row { display: flex; gap: 40px; margin: 10px 0; }
-      .label { color: #666; font-size: .85rem; margin-bottom: 2px; }
-      .val { font-size: 1rem; }
-      .section { border: 1px solid #ddd; padding: 12px 16px; border-radius: 6px; margin: 12px 0; }
-      .section-title { font-weight: 700; color: #333; margin-bottom: 8px; font-size: .9rem; text-transform: uppercase; letter-spacing: .5px; }
-      .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: 700; }
-      .status-open { background: #fdd; color: #c00; }
-      .status-closed { background: #dfd; color: #060; }
-      .status-waiting { background: #ffd; color: #850; }
-      @media print { @page { size: A4; margin: 15mm; } }
-    </style>
-  </head><body>
-    <h1>📋 ใบรายงาน NCR</h1>
-    <div class="row">
-      <div><div class="label">เลขที่เอกสาร</div><div class="val" style="font-family:monospace;font-size:1.2rem;color:#c00;font-weight:700">${n.id}</div></div>
-      <div><div class="label">วันที่ออกเอกสาร</div><div class="val">${n.date || '-'}</div></div>
-      <div><div class="label">สถานะ</div><div class="val"><span class="status ${n.status==='closed'?'status-closed':n.status==='open'?'status-open':'status-waiting'}">${statusLabel}</span></div></div>
-    </div>
-    <div class="section">
-      <div class="section-title">ข้อมูลผู้รับและเรื่อง</div>
-      <div class="row"><div><div class="label">เรียน</div><div class="val">${n.bp}</div></div><div><div class="label">แผนก</div><div class="val">${n.dept||'-'}</div></div></div>
-      <div><div class="label">เรื่อง</div><div class="val">${n.subject||'-'}</div></div>
-      <div><div class="label">รหัสสินค้า</div><div class="val" style="font-family:monospace">${n.productCode||'-'}</div></div>
-      <div><div class="label">ประเภทของไม่เป็นไปตามข้อกำหนด</div><div class="val">${n.ncType||'-'}</div></div>
-    </div>
-    <div class="section">
-      <div class="section-title">รายละเอียดข้อบกพร่อง</div>
-      <p style="white-space:pre-wrap">${n.defectDetail||'-'}</p>
-    </div>
-    <div class="section">
-      <div class="section-title">สาเหตุของปัญหา</div>
-      <p style="white-space:pre-wrap">${n.rootCause || n.supplierReply || '-'}</p>
-    </div>
-    <div class="section">
-      <div class="section-title">การดำเนินการแก้ไข</div>
-      <div class="row">
-        <div><div class="label">ประเภทการดำเนินการ</div><div class="val">${[n.actionReturn?'ส่งคืน':null,n.actionSpecial?'Special Lot':null,n.actionRework?'แก้ไข':null,n.actionDestroy?'ทำลาย':null,n.actionOther?'อื่นๆ: '+n.actionOther:null].filter(Boolean).join(', ')||'-'}</div></div>
-        <div><div class="label">วันที่เริ่ม</div><div class="val">${n.actionStartDate||'-'}</div></div>
-        <div><div class="label">ระยะเวลา</div><div class="val">${n.actionDuration||'-'}</div></div>
-        <div><div class="label">กำหนดตรวจติดตาม</div><div class="val">${n.auditDate||'-'}</div></div>
-      </div>
-    </div>
-    <div class="section">
-      <div class="section-title">การตรวจติดตามผล</div>
-      <p style="white-space:pre-wrap">${n.auditResult||'-'}</p>
-    </div>
-    ${(n.supplierReply || n.supplierCA) ? `<div class="section">
-      <div class="section-title">การตอบกลับจาก Supplier</div>
-      ${n.supplierReplyDate ? `<div><div class="label">วันที่ตอบกลับ</div><div class="val">${n.supplierReplyDate}</div></div>` : ''}
-      ${n.supplierReply ? `<div style="margin-top:6px"><div class="label">การตอบกลับ / มาตรการแก้ไข</div><p style="white-space:pre-wrap">${n.supplierReply}</p></div>` : ''}
-      ${n.supplierCA ? `<div style="margin-top:6px"><div class="label">Corrective Action</div><p style="white-space:pre-wrap">${n.supplierCA}</p></div>` : ''}
-    </div>` : ''}
-    <div class="section">
-      <div class="section-title">ผู้รับผิดชอบ</div>
-      <div class="row">
-        <div><div class="label">ผู้รายงาน</div><div class="val">${n.reporter||'-'}</div></div>
-        <div><div class="label">ผู้ทบทวน</div><div class="val">${n.reviewer||'-'}</div></div>
-        <div><div class="label">ผู้ตรวจ</div><div class="val">${n.auditor||'-'}</div></div>
-      </div>
-    </div>
-    ${n.remark ? `<div class="section"><div class="section-title">หมายเหตุ</div><p>${n.remark}</p></div>` : ''}
-    ${n.images && n.images.length ? `<div class="section"><div class="section-title">รูปภาพประกอบ</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px">${n.images.map(img=>`<img src="${img.dataUrl}" style="width:200px;height:150px;object-fit:cover;border:1px solid #ccc">`).join('')}</div></div>` : ''}
-    <div style="margin-top:30px;color:#888;font-size:.8rem;border-top:1px solid #eee;padding-top:8px">สร้างเมื่อ: ${n.createdAt ? new Date(n.createdAt).toLocaleString('th-TH') : '-'} | อัปเดตล่าสุด: ${n.updatedAt ? new Date(n.updatedAt).toLocaleString('th-TH') : '-'}</div>
-  <script>window.onload=()=>setTimeout(()=>{window.print();},500)<\/script><\/body><\/html>`);
-  win.document.close();
+function toggleExportAll(el) {
+  document.querySelectorAll('.exp-status').forEach(cb => cb.checked = el.checked);
+  updateExportCount();
 }
+
+function updateExportCount() {
+  const fromDate = document.getElementById('export-date-from').value;
+  const toDate   = document.getElementById('export-date-to').value;
+  const statuses = Array.from(document.querySelectorAll('.exp-status:checked')).map(cb => cb.value);
+  const inclNCR  = document.getElementById('exp-type-ncr').checked;
+  const inclNCRW = document.getElementById('exp-type-ncrw').checked;
+
+  const filtered = ncrList.filter(n => {
+    if (!statuses.includes(n.status)) return false;
+    const isW = n.id && n.id.startsWith('NCRW');
+    if (isW && !inclNCRW) return false;
+    if (!isW && !inclNCR) return false;
+    if (fromDate || toDate) {
+      const d = parseDateForCompare(n.date);
+      if (fromDate && d < fromDate) return false;
+      if (toDate && d > toDate) return false;
+    }
+    return true;
+  });
+  document.getElementById('export-count').textContent = filtered.length;
+}
+
+function parseDateForCompare(dateStr) {
+  if (!dateStr) return '';
+  // Handle dd/mm/yyyy
+  const parts = dateStr.split('/');
+  if (parts.length === 3 && parts[0].length <= 2) {
+    return parts[2] + '-' + parts[1].padStart(2,'0') + '-' + parts[0].padStart(2,'0');
+  }
+  return dateStr; // already yyyy-mm-dd
+}
+
+// Listen for export filter changes
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('exp-status') ||
+      e.target.id === 'exp-type-ncr' || e.target.id === 'exp-type-ncrw' ||
+      e.target.id === 'export-date-from' || e.target.id === 'export-date-to') {
+    updateExportCount();
+    // Sync "All" checkbox
+    const allChecked = document.querySelectorAll('.exp-status:checked').length === document.querySelectorAll('.exp-status').length;
+    document.getElementById('exp-all').checked = allChecked;
+  }
+});
+
+function doExport(format) {
+  const fromDate = document.getElementById('export-date-from').value;
+  const toDate   = document.getElementById('export-date-to').value;
+  const statuses = Array.from(document.querySelectorAll('.exp-status:checked')).map(cb => cb.value);
+  const inclNCR  = document.getElementById('exp-type-ncr').checked;
+  const inclNCRW = document.getElementById('exp-type-ncrw').checked;
+
+  const filtered = ncrList.filter(n => {
+    if (!statuses.includes(n.status)) return false;
+    const isW = n.id && n.id.startsWith('NCRW');
+    if (isW && !inclNCRW) return false;
+    if (!isW && !inclNCR) return false;
+    if (fromDate || toDate) {
+      const d = parseDateForCompare(n.date);
+      if (fromDate && d < fromDate) return false;
+      if (toDate && d > toDate) return false;
+    }
+    return true;
+  });
+
+  if (!filtered.length) { alert('ไม่มีรายการที่ตรงตามเงื่อนไข'); return; }
+
+  const dateStr = new Date().toISOString().slice(0,10);
+  const headers = ['เลขที่เอกสาร','วันที่','ประเภท','บริษัท/หน่วยงาน','แผนก','เรื่อง','รหัสสินค้า','รายละเอียดข้อบกพร่อง','สาเหตุ','การแก้ไข','การป้องกัน','ผู้รายงาน','ผู้ทบทวน','สถานะ','หมายเหตุ'];
+  const statusMap = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'};
+
+  const rows = filtered.map(n => [
+    n.id, n.date, n.id && n.id.startsWith('NCRW') ? 'NCRW' : 'NCR',
+    n.bp, n.dept, n.subject, n.productCode, n.defectDetail,
+    n.supplierReply || n.rootCause || '', n.supplierCA || '', n.supplierPreventive || '',
+    n.reporter, n.reviewer, statusMap[n.status] || n.status, n.remark || ''
+  ]);
+
+  if (format === 'xlsx') {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'NCR Export');
+    // Set column widths
+    ws['!cols'] = headers.map((h, i) => ({wch: i === 7 || i === 8 ? 40 : 18}));
+    XLSX.writeFile(wb, `NCR_Export_${dateStr}.xlsx`);
+  } else if (format === 'csv') {
+    const csvRows = rows.map(r => r.map(v => `"${(v||'').replace(/"/g,'""')}"`).join(','));
+    const csv = '\uFEFF' + [headers.join(','), ...csvRows].join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `NCR_Export_${dateStr}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  } else if (format === 'pdf') {
+    // Open printable version in new window
+    const statusBadgeStr = (s) => statusMap[s] || s;
+    const win = window.open('', '_blank', 'width=1000,height=700');
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>NCR Export PDF</title>
+      <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+      <style>
+        body { font-family: 'Sarabun', sans-serif; margin: 20px; color: #1a1a2e; }
+        h1 { font-size: 1.3rem; color: #c00; margin-bottom: 16px; }
+        table { width:100%; border-collapse:collapse; font-size:.8rem; }
+        th { background:#f5f5f5; padding:8px 6px; border:1px solid #ccc; font-weight:700; text-align:left; }
+        td { padding:6px; border:1px solid #ddd; vertical-align:top; }
+        @media print { @page { size: A4 landscape; margin: 10mm; } }
+      </style></head><body>
+      <h1>📋 รายงาน NCR Export — ${dateStr}</h1>
+      <p style="color:#666;font-size:.85rem">จำนวน: ${filtered.length} รายการ</p>
+      <table><thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r=>`<tr>${r.map(v=>`<td>${(v||'-').replace(/\n/g,'<br>')}</td>`).join('')}</tr>`).join('')}</tbody></table>
+      <script>window.onload=()=>setTimeout(()=>{window.print();},500)<\/script></body></html>`);
+    win.document.close();
+  }
+
+  closeModal('export-modal');
+  showAlert(`✅ Export ${format.toUpperCase()} สำเร็จ — ${filtered.length} รายการ`);
+}
+
+
 
 </script>
 
@@ -3177,12 +3284,12 @@ function printReport() {
 
     // 4. Hook เข้ากับฟังก์ชัน saveNCR เดิม
     const originalSaveNCR = window.saveNCR;
-    window.saveNCR = function() {
+    window.saveNCR = async function() {
         const isNew = editingIndex < 0;
         const docNum = document.getElementById('doc-number').value;
         
-        // เรียกใช้ฟังก์ชันเดิมก่อน
-        originalSaveNCR();
+        // เรียกใช้ฟังก์ชันเดิมก่อน (await เพราะเป็น async)
+        await originalSaveNCR();
         
         // หลังจากบันทึกเสร็จ
         if (isNew) {
