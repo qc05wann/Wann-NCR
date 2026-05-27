@@ -738,7 +738,7 @@
     <div class="form-grid form-grid-2">
       <div class="form-group">
         <label>ประเภทเอกสาร <span class="req">*</span></label>
-        <select id="doc-type" onchange="generateDocNumber()">
+        <select id="doc-type" onchange="generateDocNumber();document.querySelector('.form-title-badge').textContent=this.value;updateBpAutocomplete()">
           <option value="NCR">NCR — ออกให้ Supplier (ภายนอก)</option>
           <option value="NCRW">NCRW — ออกภายใน</option>
         </select>
@@ -1023,6 +1023,16 @@
       </div>
       <div class="tag-list" id="depts-list"></div>
     </div>
+  </div>
+
+  <!-- Suppliers -->
+  <div class="card" style="margin-top:20px">
+    <div class="card-header"><div class="card-title">🏭 รายชื่อ Supplier</div></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <input type="text" id="add-supplier" placeholder="ชื่อ Supplier เช่น บริษัท ABC จำกัด">
+      <button class="btn btn-primary btn-sm" onclick="addSupplier()">+</button>
+    </div>
+    <div class="tag-list" id="suppliers-list"></div>
   </div>
 
 <!-- โลโก้บริษัท -->
@@ -1687,6 +1697,22 @@ function formatDateInput(el) {
   if (v.length >= 3) v = v.slice(0,2)+'/'+v.slice(2);
   if (v.length >= 6) v = v.slice(0,5)+'/'+v.slice(5,9);
   el.value = v;
+  // Validate DD/MM/YYYY
+  if (v.length === 10) {
+    const parts = v.split('/');
+    const dd = parseInt(parts[0], 10);
+    const mm = parseInt(parts[1], 10);
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12) {
+      el.style.borderColor = '#f44336';
+      el.title = 'วันที่ไม่ถูกต้อง (DD: 01-31, MM: 01-12)';
+    } else {
+      el.style.borderColor = '';
+      el.title = '';
+    }
+  } else {
+    el.style.borderColor = '';
+    el.title = '';
+  }
 }
 
 function generateDocNumber() {
@@ -1741,6 +1767,19 @@ function populateSelects() {
 }
 
 // ==================== AUTOCOMPLETE ====================
+function updateBpAutocomplete() {
+  const docType = document.getElementById('doc-type').value;
+  let dataSource;
+  if (docType === 'NCRW') {
+    // NCRW ออกภายใน → แสดงรายชื่อแผนก/ผู้รายงาน
+    dataSource = [...settings.reporters, ...settings.depts].filter((v,i,a)=>a.indexOf(v)===i);
+  } else {
+    // NCR ออกให้ Supplier → แสดงรายชื่อ Supplier
+    dataSource = BP_NAMES;
+  }
+  setupAutocomplete('bp-input', 'bp-list', dataSource, v => v, 200);
+}
+
 function setupAutocomplete(inputId, listId, items, getLabel, limit=50) {
   const input = document.getElementById(inputId);
   const list = document.getElementById(listId);
@@ -1873,6 +1912,18 @@ async function saveNCR() {
   const defect = document.getElementById('defect-detail').value.trim();
   if (!bp) { alert('กรุณาระบุบริษัท/หน่วยงาน'); return; }
   if (!defect) { alert('กรุณาระบุรายละเอียดข้อบกพร่อง'); return; }
+  // Bug #6: Validate date
+  const dateVal = document.getElementById('doc-date').value;
+  if (dateVal) {
+    const dp = dateVal.split('/');
+    if (dp.length === 3) {
+      const dd = parseInt(dp[0],10), mm = parseInt(dp[1],10);
+      if (dd < 1 || dd > 31 || mm < 1 || mm > 12) {
+        alert('วันที่ไม่ถูกต้อง — กรุณาตรวจสอบ วัน (01-31) และ เดือน (01-12)');
+        return;
+      }
+    }
+  }
 
   const ncr = {
     id: editingIndex >= 0 ? ncrList[editingIndex].id : docNum,
@@ -2375,6 +2426,11 @@ function editNCR(idx) {
   const n = ncrList[idx];
   editingIndex = idx;
   showPage('new-ncr');
+  // Bug #7: Update page title to indicate edit mode
+  const pageTitle = document.querySelector('#page-new-ncr .page-title');
+  const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
+  if (pageTitle) pageTitle.textContent = '✏️ แก้ไข NCR';
+  if (pageSubtitle) pageSubtitle.textContent = 'Non-Conformance Report - แก้ไขรายการ ' + n.id;
   setTimeout(() => {
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
     const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
@@ -2561,11 +2617,11 @@ function buildNCRFormHTML(n) {
     <tr>
       <td style="width:12%;border:1px solid #333;border-top:none;padding:5px 10px;font-weight:700;vertical-align:middle">เรียน</td>
       <td style="width:38%;border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;vertical-align:middle">
-        <div style="border-bottom:1px solid #333;min-height:22px;padding-bottom:2px">${line(n.dept)}</div>
-      </td>
-      <td style="width:18%;border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;font-weight:700;vertical-align:middle;text-align:right">บริษัท/หน่วยงาน</td>
-      <td style="border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;vertical-align:middle">
         <div style="border-bottom:1px solid #333;min-height:22px;padding-bottom:2px">${line(n.bp)}</div>
+      </td>
+      <td style="width:18%;border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;font-weight:700;vertical-align:middle;text-align:right">แผนก</td>
+      <td style="border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;vertical-align:middle">
+        <div style="border-bottom:1px solid #333;min-height:22px;padding-bottom:2px">${line(n.dept)}</div>
       </td>
     </tr>
     <tr>
@@ -2951,6 +3007,12 @@ function renderSettings() {
   // Depts
   document.getElementById('depts-list').innerHTML = settings.depts.map((d,i) =>
     `<div class="tag">${d}<span class="del-tag" onclick="removeDept(${i})">✕</span></div>`).join('');
+  // Suppliers
+  const slEl = document.getElementById('suppliers-list');
+  if (slEl) {
+    slEl.innerHTML = BP_NAMES.map((s,i) =>
+      `<div class="tag">${s}<span class="del-tag" onclick="removeSupplier(${i})">✕</span></div>`).join('');
+  }
   // Codes
   document.getElementById('codes-list').innerHTML = settings.productCodes.map((p,i) =>
     `<div class="tag"><span style="font-family:monospace;color:var(--accent3)">${p.code}</span>&nbsp;${p.desc?`<span style="color:var(--text-muted)">${p.desc}</span>`:''}<span class="del-tag" onclick="removeCode(${i})">✕</span></div>`).join('');
@@ -2987,6 +3049,21 @@ async function addDept() {
 async function removeDept(i) {
   settings.depts.splice(i,1);
   saveData(); renderSettings(); showSaveAlert();
+}
+
+async function addSupplier() {
+  const val = document.getElementById('add-supplier').value.trim();
+  if (!val || BP_NAMES.includes(val)) return;
+  BP_NAMES.push(val);
+  saveData(); document.getElementById('add-supplier').value = '';
+  renderSettings(); showSaveAlert();
+  updateBpAutocomplete();
+}
+
+async function removeSupplier(i) {
+  BP_NAMES.splice(i, 1);
+  saveData(); renderSettings(); showSaveAlert();
+  updateBpAutocomplete();
 }
 
 async function addProductCode() {
@@ -3105,7 +3182,13 @@ function showPage(name) {
   if (name === 'ncr-list') { renderList(); populateSelects(); }
   if (name === 'dashboard') updateDashboard();
   if (name === 'settings') renderSettings();
-  if (name === 'new-ncr' && editingIndex < 0) { generateDocNumber(); populateSelects(); }
+  if (name === 'new-ncr' && editingIndex < 0) {
+    generateDocNumber(); populateSelects();
+    const pageTitle = document.querySelector('#page-new-ncr .page-title');
+    const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
+    if (pageTitle) pageTitle.textContent = '➕ ออก NCR ใหม่';
+    if (pageSubtitle) pageSubtitle.textContent = 'Non-Conformance Report - ใบรายงานสิ่งที่ไม่เป็นไปตามข้อกำหนด';
+  }
 }
 
 function closeModal(id) {
@@ -3303,13 +3386,17 @@ function doExport(format) {
         const baseUrl = window.location.origin + window.location.pathname;
         const replyUrl = `${baseUrl}?mode=reply&id=${id}`;
         
+        // ลบ modal เก่าถ้ามี (กรณีซ้อน)
+        const oldModal = document.getElementById('qr-modal');
+        if (oldModal) oldModal.remove();
+        
         // สร้าง Modal สำหรับ QR Code
         const modalHtml = `
             <div id="qr-modal" class="modal-overlay show">
                 <div class="modal" style="max-width: 400px; text-align: center;">
                     <div class="modal-header">
                         <div class="modal-title">QR Code สำหรับตอบกลับ</div>
-                        <button class="modal-close" onclick="document.getElementById('qr-modal').remove()">✕</button>
+                        <button class="modal-close" onclick="closeModal('qr-modal')">✕</button>
                     </div>
                     <div class="modal-body">
                         <p style="margin-bottom: 15px; color: var(--text-muted);">สแกนเพื่อกรอก Root Cause และ Corrective Action</p>
