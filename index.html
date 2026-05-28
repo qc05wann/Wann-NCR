@@ -3611,6 +3611,9 @@ document.addEventListener('click', function(e) {
 
     // 6. จัดการ Reply Mode
     if (mode === 'reply' && ncrId) {
+        // บังคับธีม Light สำหรับ Supplier
+        document.documentElement.setAttribute('data-theme', 'light');
+
         const replyStyle = document.createElement('style');
         replyStyle.innerHTML = `
             .topnav, .stats-grid, .nav-tabs, .btn-row, #page-ncr-list, #page-settings, #page-dashboard, .page-title, .page-subtitle, .form-company-header { display: none !important; }
