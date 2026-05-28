@@ -1875,7 +1875,7 @@ function populateSelects() {
   const auSel = document.getElementById('auditor-select');
   if (auSel) {
     const curAu = auSel.value;
-    auSel.innerHTML = [...settings.reporters, ...settings.reviewers].filter((v,i,a)=>a.indexOf(v)===i).map(r=>`<option>${r}</option>`).join('');
+    auSel.innerHTML = '<option value="">-- เลือกผู้ตรวจ --</option>' + [...settings.reporters, ...settings.reviewers].filter((v,i,a)=>a.indexOf(v)===i).map(r=>`<option>${r}</option>`).join('');
     if (curAu) auSel.value = curAu;
   }
 
@@ -2407,6 +2407,7 @@ function viewNCR(idx) {
         <div class="form-group">
           <label>ผู้ตรวจ</label>
           <select id="modal-auditor">
+            <option value="">-- เลือกผู้ตรวจ --</option>
             ${[...settings.reporters, ...settings.reviewers].filter((v,i,a)=>a.indexOf(v)===i).map(r=>`<option value="${r}" ${n.auditor===r?'selected':''}>${r}</option>`).join('')}
           </select>
         </div>
