@@ -624,6 +624,110 @@
   .btn-export-csv:hover { background: #4d9de0; color: #050e1c; }
   .btn-export-pdf:hover { background: #e05a5a; color: #fff; }
 
+  /* ── THEME SWITCHER ─────────────────────────────────── */
+  .theme-btn {
+    background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+    font-size: .78rem; padding: 5px 10px; border-radius: 3px; cursor: pointer;
+    font-family: 'IBM Plex Mono', monospace; letter-spacing: .5px;
+    transition: all .2s; margin-right: 8px; white-space: nowrap;
+  }
+  .theme-btn:hover { border-color: var(--accent2); color: var(--accent2); }
+  .theme-menu {
+    position: absolute; top: 100%; right: 0; margin-top: 4px;
+    background: var(--surface); border: 1px solid var(--border2);
+    border-radius: 4px; box-shadow: var(--shadow); z-index: 9999;
+    min-width: 180px; overflow: hidden; display: none;
+  }
+  .theme-menu.show { display: block; }
+  .theme-menu-item {
+    padding: 10px 14px; cursor: pointer; font-size: .85rem;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid var(--border); transition: background .15s;
+  }
+  .theme-menu-item:last-child { border-bottom: none; }
+  .theme-menu-item:hover { background: rgba(77,157,224,.1); }
+  .theme-menu-item.active { color: var(--accent2); font-weight: 700; }
+  .theme-dot {
+    width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,.2);
+  }
+
+  /* ── Light Theme ── */
+  [data-theme="light"] {
+    --bg: #eef2f7; --surface: #ffffff; --surface2: #f5f7fa;
+    --border: #d0d7e0; --border2: #2e7bbe; --accent: #d63b3b;
+    --accent2: #2e7bbe; --accent3: #1a9a62; --text: #1e293b;
+    --text-muted: #64748b; --success: #1a9a62; --warning: #c08b00;
+    --danger: #d63b3b; --info: #2e7bbe;
+    --shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+  [data-theme="light"] body {
+    background-image:
+      linear-gradient(rgba(46,123,190,.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(46,123,190,.06) 1px, transparent 1px);
+  }
+  [data-theme="light"] .topnav {
+    background: rgba(255,255,255,.97); box-shadow: 0 2px 12px rgba(0,0,0,.08);
+  }
+  [data-theme="light"] .brand { color: #1e293b; }
+  [data-theme="light"] .brand span { color: #2e7bbe; }
+  [data-theme="light"] .nav-tab { color: #64748b; }
+  [data-theme="light"] .nav-tab.active { color: #2e7bbe; border-bottom-color: #2e7bbe; }
+  [data-theme="light"] .nav-tab:hover { color: #1e293b; }
+  [data-theme="light"] .card { background: #ffffff; border-color: #d0d7e0; }
+  [data-theme="light"] input, [data-theme="light"] select, [data-theme="light"] textarea {
+    background: #f5f7fa; border-color: #d0d7e0; color: #1e293b;
+  }
+  [data-theme="light"] input:focus, [data-theme="light"] select:focus, [data-theme="light"] textarea:focus {
+    border-color: #2e7bbe; box-shadow: 0 0 0 2px rgba(46,123,190,.15);
+  }
+  [data-theme="light"] .autocomplete-list { background: #ffffff; border-color: #d0d7e0; }
+  [data-theme="light"] .autocomplete-item:hover,
+  [data-theme="light"] .autocomplete-item.selected { background: rgba(46,123,190,.08); }
+  [data-theme="light"] .tag { background: #e8f0f8; border-color: #bcd4ea; color: #1e293b; }
+  [data-theme="light"] .modal { background: #ffffff; }
+  [data-theme="light"] .modal-overlay { background: rgba(0,0,0,.35); }
+  [data-theme="light"] .auth-overlay { background: rgba(238,242,247,.97); }
+  [data-theme="light"] .auth-box { background: #ffffff; border-color: #d0d7e0; }
+  [data-theme="light"] #nav-user-email {
+    background: rgba(46,123,190,.08); color: #2e7bbe; border-color: rgba(46,123,190,.2);
+  }
+  [data-theme="light"] .stat-card { background: #ffffff; border-color: #d0d7e0; }
+
+  /* ── Midnight Theme ── */
+  [data-theme="midnight"] {
+    --bg: #0d0d0d; --surface: #1a1a1a; --surface2: #111111;
+    --border: #333333; --border2: #8b5cf6; --accent: #f87171;
+    --accent2: #8b5cf6; --accent3: #34d399; --text: #e4e4e7;
+    --text-muted: #71717a; --success: #34d399; --warning: #fbbf24;
+    --danger: #f87171; --info: #8b5cf6;
+    --shadow: 0 4px 32px rgba(0,0,0,0.8);
+  }
+  [data-theme="midnight"] body {
+    background-image:
+      linear-gradient(rgba(139,92,246,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(139,92,246,.04) 1px, transparent 1px);
+  }
+  [data-theme="midnight"] .topnav { background: rgba(13,13,13,.97); }
+  [data-theme="midnight"] .brand span { color: #8b5cf6; }
+
+  /* ── Forest Theme ── */
+  [data-theme="forest"] {
+    --bg: #0a1610; --surface: #0f211a; --surface2: #0b1a13;
+    --border: #1e4d3a; --border2: #2ecc71; --accent: #e74c3c;
+    --accent2: #2ecc71; --accent3: #1abc9c; --text: #c8e6d8;
+    --text-muted: #3d8b6a; --success: #2ecc71; --warning: #f39c12;
+    --danger: #e74c3c; --info: #2ecc71;
+    --shadow: 0 4px 32px rgba(0,0,0,0.7);
+  }
+  [data-theme="forest"] body {
+    background-image:
+      linear-gradient(rgba(46,204,113,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(46,204,113,.04) 1px, transparent 1px);
+  }
+  [data-theme="forest"] .topnav { background: rgba(10,22,16,.97); }
+  [data-theme="forest"] .brand span { color: #2ecc71; }
+
 </style>
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -643,6 +747,23 @@
     <div class="nav-tab" onclick="showPage('settings')">⚙️ ตั้งค่า</div>
   </div>
   <button class="btn btn-secondary" style="font-size:.8rem;padding:6px 14px;margin-right:8px" onclick="openExportModal()">📤 Export</button>
+  <div style="position:relative">
+    <button class="theme-btn" id="theme-toggle-btn" onclick="toggleThemeMenu()">🎨 ธีม</button>
+    <div class="theme-menu" id="theme-menu">
+      <div class="theme-menu-item active" data-theme="default" onclick="setTheme('default')">
+        <div class="theme-dot" style="background:#0b1a30"></div> Blueprint (ค่าเริ่มต้น)
+      </div>
+      <div class="theme-menu-item" data-theme="light" onclick="setTheme('light')">
+        <div class="theme-dot" style="background:#eef2f7"></div> Light
+      </div>
+      <div class="theme-menu-item" data-theme="midnight" onclick="setTheme('midnight')">
+        <div class="theme-dot" style="background:#1a1a1a;border-color:#8b5cf6"></div> Midnight
+      </div>
+      <div class="theme-menu-item" data-theme="forest" onclick="setTheme('forest')">
+        <div class="theme-dot" style="background:#0f211a;border-color:#2ecc71"></div> Forest
+      </div>
+    </div>
+  </div>
   <div class="auth-user-bar" id="nav-user-bar" style="display:none">
     <span id="nav-user-email" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:rgba(77,157,224,.1);color:#4d9de0;padding:3px 10px;border-radius:2px;font-size:.72rem;border:1px solid rgba(77,157,224,.3);font-family:'IBM Plex Mono',monospace;letter-spacing:1px"></span>
     <button class="btn btn-secondary" style="font-size:.75rem;padding:4px 10px" onclick="doLogout()">ออกจากระบบ</button>
@@ -657,10 +778,6 @@
   <!-- NCR Stats -->
   <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;letter-spacing:.05em">NCR — ออกให้ Supplier (ภายนอก)</div>
   <div class="stats-grid" id="stats-grid" style="margin-bottom:20px">
-    <div class="stat-card stat-open">
-      <div class="stat-num" id="stat-open">0</div>
-      <div class="stat-label">🔴 เปิดใหม่</div>
-    </div>
     <div class="stat-card stat-reply">
       <div class="stat-num" id="stat-waiting-reply">0</div>
       <div class="stat-label">🟡 รอตอบกลับ</div>
@@ -678,10 +795,6 @@
   <!-- NCRW Stats -->
   <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;letter-spacing:.05em">NCRW — ออกภายใน</div>
   <div class="stats-grid" id="stats-grid-w" style="margin-bottom:24px">
-    <div class="stat-card stat-open">
-      <div class="stat-num" id="statw-open">0</div>
-      <div class="stat-label">🔴 เปิดใหม่</div>
-    </div>
     <div class="stat-card stat-reply">
       <div class="stat-num" id="statw-waiting-reply">0</div>
       <div class="stat-label">🟡 รอตอบกลับ</div>
@@ -908,7 +1021,6 @@
       <div class="form-group">
         <label>สถานะ</label>
         <select id="ncr-status">
-          <option value="open">🔴 เปิดใหม่</option>
           <option value="waiting-reply">🟡 รอตอบกลับ</option>
           <option value="waiting-audit">🔵 รอตรวจติดตาม</option>
           <option value="closed">🟢 ปิดแล้ว</option>
@@ -1961,7 +2073,7 @@ async function saveNCR() {
     reporter: document.getElementById('reporter-select') ? document.getElementById('reporter-select').value : '',
     reviewer: document.getElementById('reviewer-select') ? document.getElementById('reviewer-select').value : '',
     auditor: document.getElementById('auditor-select') ? document.getElementById('auditor-select').value : '',
-    status: document.getElementById('ncr-status') ? document.getElementById('ncr-status').value : 'open',
+    status: document.getElementById('ncr-status') ? document.getElementById('ncr-status').value : 'waiting-reply',
     remark: document.getElementById('remark') ? document.getElementById('remark').value : '',
     images: uploadedImages.map(img => ({name: img.name, dataUrl: img.dataUrl})),
     createdAt: editingIndex >= 0 ? ncrList[editingIndex].createdAt : new Date().toISOString(),
@@ -2005,7 +2117,7 @@ function clearForm() {
    'audit-result','remark'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const ncTypeEl = document.getElementById('nc-type'); if (ncTypeEl) ncTypeEl.value = '';
   const deptEl = document.getElementById('dept-select'); if (deptEl) deptEl.value = '';
-  const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'open';
+  const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'waiting-reply';
   ['action-return','action-special','action-rework','action-destroy','action-other'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   const otEl = document.getElementById('action-other-text'); if (otEl) otEl.style.display = 'none';
   renderImageGrid();
@@ -2082,12 +2194,10 @@ function updateDashboard() {
     const target = isW ? countsW : counts;
     if (target[n.status] !== undefined) target[n.status]++;
   });
-  document.getElementById('stat-open').textContent          = counts['open'];
-  document.getElementById('stat-waiting-reply').textContent = counts['waiting-reply'];
+  document.getElementById('stat-waiting-reply').textContent = counts['waiting-reply'] + counts['open'];
   document.getElementById('stat-waiting-audit').textContent = counts['waiting-audit'];
   document.getElementById('stat-closed').textContent        = counts['closed'];
-  document.getElementById('statw-open').textContent          = countsW['open'];
-  document.getElementById('statw-waiting-reply').textContent = countsW['waiting-reply'];
+  document.getElementById('statw-waiting-reply').textContent = countsW['waiting-reply'] + countsW['open'];
   document.getElementById('statw-waiting-audit').textContent = countsW['waiting-audit'];
   document.getElementById('statw-closed').textContent        = countsW['closed'];
 
@@ -2415,7 +2525,7 @@ async function saveStep4(idx) {
   n.qmr            = document.getElementById('modal-qmr').value;
   n.closureDate    = document.getElementById('modal-closure-date').value;
   if (n.closureResult === 'accept') n.status = 'closed';
-  else if (n.closureResult === 'reject') n.status = 'open';
+  else if (n.closureResult === 'reject') n.status = 'waiting-reply';
   n.updatedAt = new Date().toISOString();
   await saveData(); updateDashboard(); renderList();
   const ok2 = document.getElementById('step4-save-ok');
@@ -2493,7 +2603,7 @@ function editNCR(idx) {
     setVal('reporter-select', n.reporter);
     setVal('reviewer-select', n.reviewer);
     setVal('auditor-select', n.auditor);
-    setVal('ncr-status', n.status || 'open');
+    setVal('ncr-status', n.status || 'waiting-reply');
     setVal('remark', n.remark);
     setVal('ref-doc', n.refDoc);
     setVal('nc-name', n.ncName);
@@ -2554,7 +2664,7 @@ function buildCurrentNCR() {
     reporter: g('reporter-select'),
     reviewer: g('reviewer-select'),
     auditor: g('auditor-select'),
-    status: g('ncr-status') || 'open',
+    status: g('ncr-status') || 'waiting-reply',
     remark: g('remark'),
     images: uploadedImages
   };
@@ -3362,6 +3472,49 @@ function doExport(format) {
   closeModal('export-modal');
   showAlert(`✅ Export ${format.toUpperCase()} สำเร็จ — ${filtered.length} รายการ`);
 }
+
+// ==================== THEME SWITCHER ====================
+function toggleThemeMenu() {
+  document.getElementById('theme-menu').classList.toggle('show');
+}
+
+function setTheme(theme) {
+  if (theme === 'default') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  // Update active state
+  document.querySelectorAll('.theme-menu-item').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-theme') === theme);
+  });
+  // Save preference
+  try { localStorage.setItem('ncr-theme', theme); } catch(e) {}
+  // Close menu
+  document.getElementById('theme-menu').classList.remove('show');
+}
+
+// Close theme menu when clicking outside
+document.addEventListener('click', function(e) {
+  const menu = document.getElementById('theme-menu');
+  const btn = document.getElementById('theme-toggle-btn');
+  if (menu && btn && !menu.contains(e.target) && !btn.contains(e.target)) {
+    menu.classList.remove('show');
+  }
+});
+
+// Load saved theme on startup
+(function() {
+  try {
+    const saved = localStorage.getItem('ncr-theme');
+    if (saved && saved !== 'default') {
+      document.documentElement.setAttribute('data-theme', saved);
+      document.querySelectorAll('.theme-menu-item').forEach(el => {
+        el.classList.toggle('active', el.getAttribute('data-theme') === saved);
+      });
+    }
+  } catch(e) {}
+})();
 
 
 
