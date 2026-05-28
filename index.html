@@ -1027,12 +1027,17 @@
 
   <!-- Suppliers -->
   <div class="card" style="margin-top:20px">
-    <div class="card-header"><div class="card-title">🏭 รายชื่อ Supplier</div></div>
+    <div class="card-header">
+      <div class="card-title">🏭 รายชื่อ Supplier</div>
+      <button class="btn btn-sm" onclick="const w=document.getElementById('suppliers-wrap');const b=this;if(w.style.display==='none'){w.style.display='block';b.textContent='▲ ซ่อน';}else{w.style.display='none';b.textContent='▼ แสดง ('+BP_NAMES.length+')';}" id="suppliers-toggle" style="font-size:.78rem;padding:5px 12px">▼ แสดง</button>
+    </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <input type="text" id="add-supplier" placeholder="ชื่อ Supplier เช่น บริษัท ABC จำกัด">
       <button class="btn btn-primary btn-sm" onclick="addSupplier()">+</button>
     </div>
-    <div class="tag-list" id="suppliers-list"></div>
+    <div id="suppliers-wrap" style="display:none">
+      <div class="tag-list" id="suppliers-list"></div>
+    </div>
   </div>
 
 <!-- โลโก้บริษัท -->
@@ -1575,7 +1580,7 @@ function importMasterData() {
         importCount++;
       }
 
-      saveData();
+      await saveData();
       renderSettings(); populateSelects(); renderList(); updateDashboard();
       showAlert('✅ Import Excel สำเร็จ — ' + importCount + ' หมวดข้อมูล → บันทึกขึ้น Firebase แล้ว');
     } catch(err) {
@@ -1972,10 +1977,15 @@ async function saveNCR() {
     ncrList[editingIndex] = ncr;
     editingIndex = -1;
   } else {
+    // ตรวจสอบ ID ซ้ำก่อนบันทึก (ป้องกัน Race Condition กรณีหลาย user)
+    if (ncrList.some(n => n.id === ncr.id)) {
+      generateDocNumber();
+      ncr.id = document.getElementById('doc-number').value;
+    }
     ncrList.push(ncr);
   }
 
-  saveData();
+  await saveData();
   clearForm();
   updateDashboard();
   renderList();
@@ -2376,7 +2386,7 @@ async function saveStep2(idx) {
   n.supplierPreventive= document.getElementById('modal-supplier-preventive').value;
   n.updatedAt = new Date().toISOString();
   if (n.status === 'open' || n.status === 'waiting-reply') n.status = 'waiting-audit';
-  saveData(); updateDashboard(); renderList();
+  await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step2-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
 }
@@ -2389,7 +2399,7 @@ async function saveStep3(idx) {
   n.auditor         = document.getElementById('modal-auditor').value;
   n.auditorSignDate = document.getElementById('modal-auditor-sign-date').value;
   n.updatedAt = new Date().toISOString();
-  saveData(); updateDashboard(); renderList();
+  await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step3-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
 }
@@ -2407,9 +2417,9 @@ async function saveStep4(idx) {
   if (n.closureResult === 'accept') n.status = 'closed';
   else if (n.closureResult === 'reject') n.status = 'open';
   n.updatedAt = new Date().toISOString();
-  saveData(); updateDashboard(); renderList();
-  const ok = document.getElementById('step4-save-ok');
-  if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
+  await saveData(); updateDashboard(); renderList();
+  const ok2 = document.getElementById('step4-save-ok');
+  if (ok2) { ok2.style.display='inline'; setTimeout(()=>ok2.style.display='none',2500); }
   // Re-render modal title with updated status badge
   document.getElementById('modal-title').innerHTML = `
     <span>NCR: <span class="ncr-id" style="font-size:1rem">${escapeHTML(n.id)}</span></span>
@@ -2429,7 +2439,7 @@ async function saveSupplierReply(idx) {
   if (ncrList[idx].status === 'waiting-reply' && (replyText || replyCA)) {
     ncrList[idx].status = 'waiting-audit';
   }
-  saveData();
+  await saveData();
   updateDashboard();
   renderList();
   const ok = document.getElementById('supplier-save-ok');
@@ -2439,7 +2449,7 @@ async function saveSupplierReply(idx) {
 
 async function quickStatus(idx, status) {
   ncrList[idx].status = status;
-  saveData();
+  await saveData();
   updateDashboard();
   renderList();
   viewNCR(idx);
@@ -2495,7 +2505,7 @@ function editNCR(idx) {
 async function deleteNCR(idx) {
   if (!confirm(`ลบ NCR: ${ncrList[idx].id} ?`)) return;
   ncrList.splice(idx, 1);
-  saveData();
+  await saveData();
   renderList();
   updateDashboard();
 }
@@ -3028,6 +3038,7 @@ function renderSettings() {
     slEl.innerHTML = BP_NAMES.map((s,i) =>
       `<div class="tag">${s}<span class="del-tag" onclick="removeSupplier(${i})">✕</span></div>`).join('');
   }
+  const _st=document.getElementById('suppliers-toggle');if(_st&&document.getElementById('suppliers-wrap').style.display==='none')_st.textContent='▼ แสดง ('+BP_NAMES.length+')';
   // Codes
   document.getElementById('codes-list').innerHTML = settings.productCodes.map((p,i) =>
     `<div class="tag"><span style="font-family:monospace;color:var(--accent3)">${p.code}</span>&nbsp;${p.desc?`<span style="color:var(--text-muted)">${p.desc}</span>`:''}<span class="del-tag" onclick="removeCode(${i})">✕</span></div>`).join('');
@@ -3041,7 +3052,7 @@ async function addPerson(type, inputId) {
   if (!val) return;
   if (!settings[type].includes(val)) {
     settings[type].push(val);
-    saveData();
+    await saveData();
     document.getElementById(inputId).value = '';
     renderSettings();
     showSaveAlert();
@@ -3050,34 +3061,34 @@ async function addPerson(type, inputId) {
 
 async function removePerson(type, i) {
   settings[type].splice(i, 1);
-  saveData(); renderSettings(); showSaveAlert();
+  await saveData(); renderSettings(); showSaveAlert();
 }
 
 async function addDept() {
   const val = document.getElementById('add-dept').value.trim();
   if (!val || settings.depts.includes(val)) return;
   settings.depts.push(val);
-  saveData(); document.getElementById('add-dept').value = '';
+  await saveData(); document.getElementById('add-dept').value = '';
   renderSettings(); showSaveAlert();
 }
 
 async function removeDept(i) {
   settings.depts.splice(i,1);
-  saveData(); renderSettings(); showSaveAlert();
+  await saveData(); renderSettings(); showSaveAlert();
 }
 
 async function addSupplier() {
   const val = document.getElementById('add-supplier').value.trim();
   if (!val || BP_NAMES.includes(val)) return;
   BP_NAMES.push(val);
-  saveData(); document.getElementById('add-supplier').value = '';
+  await saveData(); document.getElementById('add-supplier').value = '';
   renderSettings(); showSaveAlert();
   updateBpAutocomplete();
 }
 
 async function removeSupplier(i) {
   BP_NAMES.splice(i, 1);
-  saveData(); renderSettings(); showSaveAlert();
+  await saveData(); renderSettings(); showSaveAlert();
   updateBpAutocomplete();
 }
 
@@ -3092,7 +3103,7 @@ async function addProductCode() {
   } else {
     settings.productCodes.push({code, desc});
   }
-  saveData();
+  await saveData();
   document.getElementById('add-code').value = '';
   document.getElementById('add-code-desc').value = '';
   renderSettings(); showSaveAlert();
@@ -3101,7 +3112,7 @@ async function addProductCode() {
 
 async function removeCode(i) {
   settings.productCodes.splice(i,1);
-  saveData(); renderSettings(); showSaveAlert();
+  await saveData(); renderSettings(); showSaveAlert();
 }
 
 function showSaveAlert() {
@@ -3126,10 +3137,10 @@ function uploadSignature() {
   const file = fileInput.files[0];
   if (file.size > 500000) { showSigMsg('❌ ไฟล์ใหญ่เกินไป (สูงสุด 500KB)', '#e53935'); return; }
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       signatures[name] = e.target.result;
-      saveData(); // บันทึก signatures ขึ้น Firebase
+      await saveData(); // บันทึก signatures ขึ้น Firebase
       nameInput.value = ''; fileInput.value = '';
       renderSigList();
       showSigMsg('✅ อัปโหลดลายเซ็นเรียบร้อยแล้ว (บันทึกใน Local)', '#4caf50');
@@ -3138,12 +3149,12 @@ function uploadSignature() {
   reader.readAsDataURL(file);
 }
 
-function deleteSignature(name) {
+async function deleteSignature(name) {
   // ลบลายเซ็นจาก Firebase
   if (!confirm('ลบลายเซ็นของ "' + name + '" ใช่หรือไม่?')) return;
   try {
     delete signatures[name];
-    saveData();
+    await saveData();
     renderSigList();
     showSigMsg('✅ ลบลายเซ็นเรียบร้อยแล้ว', '#4caf50');
   } catch(err) { showSigMsg('❌ ' + err.message, '#e53935'); }
