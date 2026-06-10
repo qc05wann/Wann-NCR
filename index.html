@@ -2315,7 +2315,7 @@ function viewNCR(idx) {
       </div>
       ${n.images && n.images.length ? `
         <div style="margin-top:8px"><label style="font-size:.75rem;color:var(--text-muted);font-weight:600">รูปภาพประกอบ (${n.images.length} รูป)</label>
-        <div class="img-grid" style="margin-top:6px">${n.images.map(img=>`<div class="img-thumb"><img src="${img.dataUrl}" alt="${img.name}"></div>`).join('')}</div></div>` : ''}
+        <div class="img-grid" style="margin-top:6px">${n.images.map((img,i)=>`<div class="img-thumb" style="cursor:pointer" onclick="openViewImgLB(${i},this.closest('.img-grid'))" title="คลิกเพื่อดูขนาดใหญ่"><img src="${img.dataUrl}" alt="${img.name}" style="width:100%;height:100%;object-fit:cover;pointer-events:none"></div>`).join('')}</div></div>` : ''}
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
         <button class="btn btn-secondary btn-sm" onclick="editNCR(${idx});closeModal('view-modal')">✏️ แก้ไข NCR</button>
         <button class="btn btn-primary btn-sm" onclick="openPrint(${idx})">🖨 พิมพ์ฟอร์ม</button>
@@ -3924,7 +3924,57 @@ document.addEventListener('click', function(e) {
         }
     }
 
-    // QR buttons removed
+    // ===== LIGHTBOX สำหรับหน้า View NCR =====
+(function(){
+  function ensureViewer(){
+    if(document.getElementById('view-img-lb')) return;
+    var v = document.createElement('div');
+    v.id = 'view-img-lb';
+    v.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:99999;align-items:center;justify-content:center;flex-direction:column;cursor:default';
+    v.innerHTML = '<div style="position:relative;max-width:92vw;max-height:85vh;display:flex;align-items:center;justify-content:center">'
+      +'<img id="view-img-lb-img" style="max-width:90vw;max-height:82vh;border-radius:10px;object-fit:contain;box-shadow:0 8px 40px rgba(0,0,0,.7)">'
+      +'</div>'
+      +'<div style="display:flex;align-items:center;gap:16px;margin-top:14px">'
+      +'<button onclick="viewImgLBNav(-1)" style="background:rgba(255,255,255,.15);color:#fff;border:none;width:40px;height:40px;border-radius:50%;font-size:1.4rem;cursor:pointer">&#8249;</button>'
+      +'<span id="view-img-lb-label" style="color:#fff;font-size:.85rem;min-width:80px;text-align:center;font-family:Sarabun,sans-serif"></span>'
+      +'<button onclick="viewImgLBNav(1)" style="background:rgba(255,255,255,.15);color:#fff;border:none;width:40px;height:40px;border-radius:50%;font-size:1.4rem;cursor:pointer">&#8250;</button>'
+      +'</div>'
+      +'<button onclick="closeViewImgLB()" style="position:absolute;top:16px;right:20px;background:rgba(255,255,255,.15);color:#fff;border:none;width:36px;height:36px;border-radius:50%;font-size:1.1rem;cursor:pointer;z-index:1">&#x2715;</button>';
+    v.addEventListener('click', function(e){ if(e.target===this) closeViewImgLB(); });
+    document.body.appendChild(v);
+  }
+  window._viewImgLBImages = [];
+  window._viewImgLBIdx = 0;
+  window.openViewImgLB = function(i, grid){
+    ensureViewer();
+    var imgs = Array.from(grid.querySelectorAll('img')).map(function(el){ return el.src; });
+    window._viewImgLBImages = imgs;
+    window._viewImgLBIdx = i;
+    var v = document.getElementById('view-img-lb');
+    v.style.display = 'flex';
+    document.getElementById('view-img-lb-img').src = imgs[i];
+    document.getElementById('view-img-lb-label').textContent = (i+1) + ' / ' + imgs.length;
+  };
+  window.closeViewImgLB = function(){
+    var v = document.getElementById('view-img-lb');
+    if(v) v.style.display = 'none';
+  };
+  window.viewImgLBNav = function(dir){
+    var imgs = window._viewImgLBImages;
+    window._viewImgLBIdx = (window._viewImgLBIdx + dir + imgs.length) % imgs.length;
+    document.getElementById('view-img-lb-img').src = imgs[window._viewImgLBIdx];
+    document.getElementById('view-img-lb-label').textContent = (window._viewImgLBIdx+1) + ' / ' + imgs.length;
+  };
+  document.addEventListener('keydown', function(e){
+    var v = document.getElementById('view-img-lb');
+    if(!v || v.style.display==='none') return;
+    if(e.key==='Escape') closeViewImgLB();
+    if(e.key==='ArrowLeft') viewImgLBNav(-1);
+    if(e.key==='ArrowRight') viewImgLBNav(1);
+  });
+})();
+
+// QR buttons removed
 
 })();
 
