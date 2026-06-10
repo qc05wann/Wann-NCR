@@ -913,11 +913,11 @@
     <div class="form-grid form-grid-2" style="margin-top:16px">
       <div class="form-group">
         <label>เรื่อง (หัวข้อ NCR)</label>
-        <input type="text" id="subject" placeholder="ระบุเรื่อง NCR..." list="subject-options">
-        <datalist id="subject-options">
-          <option value="พบข้อบกพร่องของบรรจุภัณฑ์ที่นำส่งเข้ามา">
-          <option value="พบข้อบกพร่องของวัตถุดิบที่นำส่งเข้ามา">
-        </datalist>
+        <select id="subject">
+          <option value="">-- เลือกหัวเรื่อง --</option>
+          <option value="พบข้อบกพร่องของบรรจุภัณฑ์ที่นำส่งเข้ามา">พบข้อบกพร่องของบรรจุภัณฑ์ที่นำส่งเข้ามา</option>
+          <option value="พบข้อบกพร่องของวัตถุดิบที่นำส่งเข้ามา">พบข้อบกพร่องของวัตถุดิบที่นำส่งเข้ามา</option>
+        </select>
       </div>
       <div class="form-group">
         <label>ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด</label>
