@@ -851,7 +851,7 @@
     <div class="form-grid form-grid-2">
       <div class="form-group">
         <label>ประเภทเอกสาร <span class="req">*</span></label>
-        <select id="doc-type" onchange="generateDocNumber();document.querySelector('.form-title-badge').textContent=this.value;updateBpAutocomplete()">
+        <select id="doc-type" onchange="if(editingIndex<0){generateDocNumber();}document.querySelector('.form-title-badge').textContent=this.value;updateBpAutocomplete();updateBpLabel();">
           <option value="NCR">NCR — ออกให้ Supplier (ภายนอก)</option>
           <option value="NCRW">NCRW — ออกภายใน</option>
         </select>
@@ -878,8 +878,8 @@
   <div class="card">
     <div class="section-label">สิ่งที่ไม่เป็นไปตามข้อกำหนด</div>
     <div class="form-group">
-      <label>ประเภทของไม่เป็นไปตามข้อกำหนด</label>
-      <select id="nc-type">
+      <label>ประเภทของไม่เป็นไปตามข้อกำหนด <span class="req">*</span></label>
+      <select id="nc-type" onchange="filterSubjectByNcType()">
         <option value="">-- เลือกประเภท --</option>
         <option>วัตถุดิบ</option>
         <option>บรรจุภัณฑ์</option>
@@ -903,9 +903,10 @@
         </select>
       </div>
       <div class="form-group">
-        <label>เรียน (บริษัท/หน่วยงาน) <span class="req">*</span></label>
+        <label id="bp-label">เรียน (บริษัท/หน่วยงาน) <span class="req">*</span></label>
         <div class="autocomplete-wrap">
-          <input type="text" id="bp-input" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off">
+          <input type="text" id="bp-input" placeholder="พิมพ์ชื่อเพื่อค้นหา..." autocomplete="off" oninput="document.getElementById('bp-selected').value=''">
+          <input type="hidden" id="bp-selected">
           <div class="autocomplete-list" id="bp-list"></div>
         </div>
       </div>
@@ -1067,7 +1068,6 @@
     <input type="text" id="search-input" placeholder="🔍 ค้นหา..." oninput="renderList()">
     <select id="filter-status" onchange="renderList()">
       <option value="">ทุกสถานะ</option>
-      <option value="open">เปิดใหม่</option>
       <option value="waiting-reply">รอตอบกลับ</option>
       <option value="waiting-audit">รอตรวจติดตาม</option>
       <option value="closed">ปิดแล้ว</option>
@@ -1145,7 +1145,7 @@
   <div class="card" style="margin-top:20px">
     <div class="card-header">
       <div class="card-title">🏭 รายชื่อ Supplier</div>
-      <button class="btn btn-sm" onclick="const w=document.getElementById('suppliers-wrap');const b=this;if(w.style.display==='none'){w.style.display='block';b.textContent='▲ ซ่อน';}else{w.style.display='none';b.textContent='▼ แสดง ('+BP_NAMES.length+')';}" id="suppliers-toggle" style="font-size:.78rem;padding:5px 12px">▼ แสดง</button>
+      <button class="btn btn-sm" onclick="const w=document.getElementById('suppliers-wrap');const b=this;if(w.style.display==='none'){w.style.display='block';b.textContent='▲ ซ่อน';renderSettings();}else{w.style.display='none';b.textContent='▼ แสดง ('+BP_NAMES.length+')';renderSettings();}" id="suppliers-toggle" style="font-size:.78rem;padding:5px 12px">▼ แสดง</button>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <input type="text" id="add-supplier" placeholder="ชื่อ Supplier เช่น บริษัท ABC จำกัด">
@@ -1198,7 +1198,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">📦 รหัสสินค้า SAP (Column F)</div>
-      <button class="btn btn-sm" onclick="const w=document.getElementById('codes-wrap');const b=this;if(w.style.display==='none'){w.style.display='block';b.textContent='▲ ซ่อน';}else{w.style.display='none';b.textContent='▼ แสดง ('+settings.productCodes.length+')';}" id="codes-toggle" style="font-size:.78rem;padding:5px 12px">▼ แสดง</button>
+      <button class="btn btn-sm" onclick="const w=document.getElementById('codes-wrap');const b=this;if(w.style.display==='none'){w.style.display='block';b.textContent='▲ ซ่อน';renderSettings();}else{w.style.display='none';b.textContent='▼ แสดง ('+settings.productCodes.length+')';renderSettings();}" id="codes-toggle" style="font-size:.78rem;padding:5px 12px">▼ แสดง</button>
     </div>
     <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
       <input type="text" id="add-code" placeholder="รหัสสินค้า" style="max-width:180px">
@@ -1824,12 +1824,18 @@ function formatDateInput(el) {
     const parts = v.split('/');
     const dd = parseInt(parts[0], 10);
     const mm = parseInt(parts[1], 10);
+    const yyyy = parseInt(parts[2], 10);
     if (dd < 1 || dd > 31 || mm < 1 || mm > 12) {
       el.style.borderColor = '#f44336';
       el.title = 'วันที่ไม่ถูกต้อง (DD: 01-31, MM: 01-12)';
     } else {
       el.style.borderColor = '';
       el.title = '';
+      // Bug #5 fix: sync date picker เมื่อพิมพ์ครบ
+      const pickerEl = document.getElementById('doc-date-picker');
+      if (pickerEl && yyyy > 1900) {
+        pickerEl.value = yyyy + '-' + String(mm).padStart(2,'0') + '-' + String(dd).padStart(2,'0');
+      }
     }
   } else {
     el.style.borderColor = '';
@@ -1894,6 +1900,46 @@ function populateSelects() {
   }
 }
 
+// Bug #10 fix: เปลี่ยน label "เรียน" ตามประเภทเอกสาร
+function updateBpLabel() {
+  const docType = document.getElementById('doc-type') ? document.getElementById('doc-type').value : 'NCR';
+  const labelEl = document.getElementById('bp-label');
+  if (!labelEl) return;
+  if (docType === 'NCRW') {
+    labelEl.innerHTML = 'เรียน (หน่วยงานภายใน) <span class="req">*</span>';
+  } else {
+    labelEl.innerHTML = 'เรียน (บริษัท/หน่วยงาน) <span class="req">*</span>';
+  }
+}
+
+// Bug #9 fix: กรอง dropdown "เรื่อง" ตามประเภท nc-type ที่เลือก
+function filterSubjectByNcType() {
+  const ncType = document.getElementById('nc-type') ? document.getElementById('nc-type').value : '';
+  const subjectEl = document.getElementById('subject');
+  if (!subjectEl) return;
+  const cur = subjectEl.value;
+  // กำหนด options ตาม nc-type
+  const allSubjects = [
+    { value: 'พบข้อบกพร่องของบรรจุภัณฑ์ที่นำส่งเข้ามา', types: ['บรรจุภัณฑ์'] },
+    { value: 'พบข้อบกพร่องของวัตถุดิบที่นำส่งเข้ามา', types: ['วัตถุดิบ'] },
+  ];
+  let html = '<option value="">-- เลือกหัวเรื่อง --</option>';
+  allSubjects.forEach(s => {
+    // แสดงถ้า nc-type ตรงกัน หรือ nc-type ว่าง (ยังไม่เลือก) หรือไม่ตรง type ที่กำหนด (แสดงทุกอัน)
+    if (!ncType || s.types.length === 0 || s.types.includes(ncType)) {
+      html += `<option value="${s.value}">${s.value}</option>`;
+    }
+  });
+  // ถ้า nc-type ไม่ตรงกับ type ที่กำหนดเลย แสดงทั้งหมด
+  const hasMatch = allSubjects.some(s => s.types.includes(ncType));
+  if (ncType && !hasMatch) {
+    allSubjects.forEach(s => { html += `<option value="${s.value}">${s.value}</option>`; });
+  }
+  subjectEl.innerHTML = html;
+  // คืนค่าเดิมถ้ายังตรงกับตัวเลือกใหม่
+  if (cur) subjectEl.value = cur;
+}
+
 // ==================== AUTOCOMPLETE ====================
 function updateBpAutocomplete() {
   const docType = document.getElementById('doc-type').value;
@@ -1930,6 +1976,11 @@ function setupAutocomplete(inputId, listId, items, getLabel, limit=50) {
         e.preventDefault();
         input.value = label;
         list.classList.remove('show');
+        // Bug #4 fix: ถ้าเป็น bp-input ให้ set hidden field bp-selected ด้วย
+        if (inputId === 'bp-input') {
+          const selEl = document.getElementById('bp-selected');
+          if (selEl) selEl.value = label;
+        }
       });
       list.appendChild(div);
     });
@@ -2036,12 +2087,15 @@ function removeImg(i) {
 // ==================== SAVE NCR ====================
 async function saveNCR() {
   const docNum = document.getElementById('doc-number').value;
-  const bp = document.getElementById('bp-input').value.trim();
+  const bp = (document.getElementById('bp-selected') && document.getElementById('bp-selected').value) ? document.getElementById('bp-selected').value : document.getElementById('bp-input').value.trim();
   const defect = document.getElementById('defect-detail').value.trim();
   if (!bp) { alert('กรุณาระบุบริษัท/หน่วยงาน'); return; }
   if (!defect) { alert('กรุณาระบุรายละเอียดข้อบกพร่อง'); return; }
   // Validate date format DD/MM/YYYY
   const dateVal = document.getElementById('doc-date').value;
+  if (!dateVal || dateVal.length < 10) { alert('กรุณาระบุวันที่ออกเอกสาร (วว/ดด/ปปปป)'); document.getElementById('doc-date').focus(); return; }
+  const ncTypeVal = document.getElementById('nc-type').value;
+  if (!ncTypeVal) { alert('กรุณาเลือกประเภทของไม่เป็นไปตามข้อกำหนด'); document.getElementById('nc-type').focus(); return; }
   if (dateVal) {
     const dp = dateVal.split('/');
     if (dp.length === 3) {
@@ -2587,6 +2641,9 @@ function editNCR(idx) {
     setVal('doc-date', n.date);
     setVal('nc-type', n.ncType);
     setVal('bp-input', n.bp);
+    // Bug #4 fix: set bp-selected เมื่อ load edit
+    const bpSelEl = document.getElementById('bp-selected');
+    if (bpSelEl) bpSelEl.value = n.bp || '';
     setVal('dept-select', n.dept);
     setVal('subject', n.subject);
     setVal('product-code-input', n.productCode);
@@ -2614,6 +2671,11 @@ function editNCR(idx) {
     setVal('nc-name', n.ncName);
     uploadedImages = n.images ? [...n.images] : [];
     renderImageGrid();
+    // Bug #10 fix: อัปเดต label "เรียน" ตามประเภทเอกสาร
+    updateBpLabel();
+    // Bug #9 fix: filter subject ตาม nc-type ที่โหลดมา แล้ว restore ค่า
+    filterSubjectByNcType();
+    setVal('subject', n.subject);
   }, 100);
 }
 
@@ -2649,7 +2711,7 @@ function buildCurrentNCR() {
     id: g('doc-number'),
     date: g('doc-date'),
     ncType: g('nc-type'),
-    bp: g('bp-input'),
+    bp: (document.getElementById('bp-selected') && document.getElementById('bp-selected').value) ? document.getElementById('bp-selected').value : g('bp-input'),
     dept: g('dept-select'),
     subject: g('subject'),
     ncName: g('nc-name'),
@@ -3147,16 +3209,26 @@ function renderSettings() {
   // Depts
   document.getElementById('depts-list').innerHTML = settings.depts.map((d,i) =>
     `<div class="tag">${d}<span class="del-tag" onclick="removeDept(${i})">✕</span></div>`).join('');
-  // Suppliers
+  // Suppliers — Bug #3 fix: Lazy render เฉพาะเมื่อ wrap เปิดอยู่
   const slEl = document.getElementById('suppliers-list');
+  const suppWrap = document.getElementById('suppliers-wrap');
   if (slEl) {
-    slEl.innerHTML = BP_NAMES.map((s,i) =>
-      `<div class="tag">${s}<span class="del-tag" onclick="removeSupplier(${i})">✕</span></div>`).join('');
+    if (suppWrap && suppWrap.style.display !== 'none') {
+      slEl.innerHTML = BP_NAMES.map((s,i) =>
+        `<div class="tag">${s}<span class="del-tag" onclick="removeSupplier(${i})">✕</span></div>`).join('');
+    } else {
+      slEl.innerHTML = ''; // ล้าง DOM เมื่อซ่อนอยู่
+    }
   }
   const _st=document.getElementById('suppliers-toggle');if(_st&&document.getElementById('suppliers-wrap').style.display==='none')_st.textContent='▼ แสดง ('+BP_NAMES.length+')';
-  // Codes
-  document.getElementById('codes-list').innerHTML = settings.productCodes.map((p,i) =>
-    `<div class="tag"><span style="font-family:monospace;color:var(--accent3)">${p.code}</span>&nbsp;${p.desc?`<span style="color:var(--text-muted)">${p.desc}</span>`:''}<span class="del-tag" onclick="removeCode(${i})">✕</span></div>`).join('');
+  // Codes — Bug #3 fix: Lazy render เฉพาะเมื่อ wrap เปิดอยู่
+  const codesWrap = document.getElementById('codes-wrap');
+  if (codesWrap && codesWrap.style.display !== 'none') {
+    document.getElementById('codes-list').innerHTML = settings.productCodes.map((p,i) =>
+      `<div class="tag"><span style="font-family:monospace;color:var(--accent3)">${p.code}</span>&nbsp;${p.desc?`<span style="color:var(--text-muted)">${p.desc}</span>`:''}<span class="del-tag" onclick="removeCode(${i})">✕</span></div>`).join('');
+  } else {
+    document.getElementById('codes-list').innerHTML = ''; // ล้าง DOM เมื่อซ่อนอยู่
+  }
   const _ct=document.getElementById('codes-toggle');if(_ct&&document.getElementById('codes-wrap').style.display==='none')_ct.textContent='▼ แสดง ('+settings.productCodes.length+')';
   // Signatures
   renderSigList();
@@ -3557,10 +3629,17 @@ document.addEventListener('click', function(e) {
         const docNum = document.getElementById('doc-number').value;
         
         // เรียกใช้ฟังก์ชันเดิมก่อน (await เพราะเป็น async)
-        await originalSaveNCR();
+        // Bug #7 fix: ใช้ try/catch เพื่อป้องกัน QR แสดงเมื่อบันทึกล้มเหลว
+        let saveOk = false;
+        try {
+            await originalSaveNCR();
+            saveOk = true;
+        } catch(err) {
+            console.error('saveNCR error:', err);
+        }
         
-        // หลังจากบันทึกเสร็จ
-        if (isNew) {
+        // หลังจากบันทึกสำเร็จเท่านั้นจึงแสดง QR
+        if (isNew && saveOk) {
             showQRCodeModal(docNum);
         }
     };
