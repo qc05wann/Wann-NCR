@@ -2166,6 +2166,8 @@ async function saveNCR() {
   renderList();
   showAlert('✅ บันทึก NCR เรียบร้อยแล้ว: ' + ncr.id);
   showPage('ncr-list');
+  // Bug fix (QR ชี้เลขผิด): จดเลขที่เอกสาร "จริง" ที่บันทึก — เผื่อกรณีเลขซ้ำแล้วระบบออกเลขใหม่ให้อัตโนมัติ
+  window._lastSavedNcrId = ncr.id;
   return true; // Bug fix: ยืนยันว่าบันทึกสำเร็จจริง (QR wrapper ใช้เช็ก)
 }
 
@@ -2180,6 +2182,9 @@ function clearForm() {
    'action-other-text','action-start-date','action-duration','audit-date',
    'audit-result','remark'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const ncTypeEl = document.getElementById('nc-type'); if (ncTypeEl) ncTypeEl.value = '';
+  // Bug fix (ดรอปดาวน์เรื่องค้าง): หลังรีเซ็ตประเภท ต้องสั่งกรองหัวเรื่องใหม่ให้กลับมาแสดงครบทุกตัวเลือก
+  if (typeof filterSubjectByNcType === 'function') filterSubjectByNcType();
+  const subjEl = document.getElementById('subject'); if (subjEl) subjEl.value = '';
   const deptEl = document.getElementById('dept-select'); if (deptEl) deptEl.value = '';
   const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'waiting-reply';
   ['action-return','action-special','action-rework','action-destroy','action-other'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
@@ -3688,8 +3693,9 @@ document.addEventListener('click', function(e) {
         }
         
         // หลังจากบันทึกสำเร็จเท่านั้นจึงแสดง QR
+        // Bug fix (QR ชี้เลขผิด): ใช้เลขที่เอกสารจริงหลังบันทึก (ระบบอาจออกเลขใหม่ถ้าเลขที่กรอกซ้ำกับที่มีอยู่)
         if (isNew && saveOk) {
-            showQRCodeModal(docNum);
+            showQRCodeModal(window._lastSavedNcrId || docNum);
         }
     };
 
