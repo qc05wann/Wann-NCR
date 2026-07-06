@@ -86,6 +86,8 @@
     transition: all .2s;
     white-space: nowrap;
     text-transform: uppercase;
+    touch-action: manipulation; /* Bug fix: แตะครั้งเดียวติดบนแท็บเล็ต (ตัด delay รอ double-tap) */
+    user-select: none;
   }
   .nav-tab:hover { color: var(--accent2); background: rgba(77,157,224,.06); }
   .nav-tab.active {
@@ -742,7 +744,7 @@
   <div class="brand">NCR <span>// SYS</span></div>
   <div class="nav-tabs">
     <div class="nav-tab active" onclick="showPage('dashboard')">📊 แดชบอร์ด</div>
-    <div class="nav-tab" onclick="showPage('new-ncr')">➕ ออก NCR ใหม่</div>
+    <div class="nav-tab" onclick="startNewNCR()">➕ ออก NCR ใหม่</div>
     <div class="nav-tab" onclick="showPage('ncr-list')">📋 รายการ NCR</div>
     <div class="nav-tab" onclick="showPage('settings')">⚙️ ตั้งค่า</div>
   </div>
@@ -2089,20 +2091,23 @@ async function saveNCR() {
   const docNum = document.getElementById('doc-number').value;
   const bp = (document.getElementById('bp-selected') && document.getElementById('bp-selected').value) ? document.getElementById('bp-selected').value : document.getElementById('bp-input').value.trim();
   const defect = document.getElementById('defect-detail').value.trim();
-  if (!bp) { alert('กรุณาระบุบริษัท/หน่วยงาน'); return; }
-  if (!defect) { alert('กรุณาระบุรายละเอียดข้อบกพร่อง'); return; }
+  // Bug fix (freeze): ใช้ toast บนหน้าจอแทน alert() (alert อาจถูกเบราว์เซอร์บล็อก)
+  // และคืนค่า false ชัดเจนเมื่อ validation ไม่ผ่าน เพื่อให้ QR wrapper รู้ว่ายังไม่ได้บันทึก
+  if (!bp) { showErrorToast('⚠️ กรุณาระบุ เรียน (บริษัท/หน่วยงาน)'); focusField('bp-input'); return false; }
+  if (!defect) { showErrorToast('⚠️ กรุณาระบุรายละเอียดข้อบกพร่อง'); focusField('defect-detail'); return false; }
   // Validate date format DD/MM/YYYY
   const dateVal = document.getElementById('doc-date').value;
-  if (!dateVal || dateVal.length < 10) { alert('กรุณาระบุวันที่ออกเอกสาร (วว/ดด/ปปปป)'); document.getElementById('doc-date').focus(); return; }
+  if (!dateVal || dateVal.length < 10) { showErrorToast('⚠️ กรุณาระบุวันที่ออกเอกสาร (วว/ดด/ปปปป)'); focusField('doc-date'); return false; }
   const ncTypeVal = document.getElementById('nc-type').value;
-  if (!ncTypeVal) { alert('กรุณาเลือกประเภทของไม่เป็นไปตามข้อกำหนด'); document.getElementById('nc-type').focus(); return; }
+  if (!ncTypeVal || ncTypeVal === '-') { showErrorToast('⚠️ กรุณาเลือกประเภทของไม่เป็นไปตามข้อกำหนด'); focusField('nc-type'); return false; }
   if (dateVal) {
     const dp = dateVal.split('/');
     if (dp.length === 3) {
       const dd = parseInt(dp[0],10), mm = parseInt(dp[1],10);
       if (dd < 1 || dd > 31 || mm < 1 || mm > 12) {
-        alert('วันที่ไม่ถูกต้อง — กรุณาตรวจสอบ วัน (01-31) และ เดือน (01-12)');
-        return;
+        showErrorToast('⚠️ วันที่ไม่ถูกต้อง — ตรวจสอบ วัน (01-31) และ เดือน (01-12)');
+        focusField('doc-date');
+        return false;
       }
     }
   }
@@ -2161,6 +2166,7 @@ async function saveNCR() {
   renderList();
   showAlert('✅ บันทึก NCR เรียบร้อยแล้ว: ' + ncr.id);
   showPage('ncr-list');
+  return true; // Bug fix: ยืนยันว่าบันทึกสำเร็จจริง (QR wrapper ใช้เช็ก)
 }
 
 function clearForm() {
@@ -2212,9 +2218,11 @@ function renderList() {
     return;
   }
   empty.style.display = 'none';
+  // Bug fix (ข้อมูลเก่าไม่ครบ): ติดป้าย ⚠️ ให้รายการที่ช่องบังคับว่าง (บันทึกมาจากเวอร์ชันเก่าก่อนมี validation)
+  const isIncomplete = n => !n.date || !n.ncType || n.ncType === '-' || !n.bp || !n.defectDetail;
   tbody.innerHTML = filtered.map((n, i) => `
     <tr>
-      <td><span class="ncr-id">${escapeHTML(n.id)}</span></td>
+      <td><span class="ncr-id">${escapeHTML(n.id)}</span>${isIncomplete(n) ? ' <span title="ข้อมูลบังคับไม่ครบ — กดแก้ไขเพื่อเติมให้ครบ" style="cursor:help">⚠️</span>' : ''}</td>
       <td>${escapeHTML(n.date) || '-'}</td>
       <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHTML(n.bp)}</td>
       <td>${escapeHTML(n.dept) || '-'}</td>
@@ -3387,21 +3395,36 @@ function exportCSV() {
 
 // ==================== UI HELPERS ====================
 function showPage(name) {
+  const targetPage = document.getElementById('page-'+name);
+  if (!targetPage) return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('page-'+name).classList.add('active');
+  targetPage.classList.add('active');
   const tabMap = {'dashboard':0,'new-ncr':1,'ncr-list':2,'settings':3};
   document.querySelectorAll('.nav-tab')[tabMap[name]]?.classList.add('active');
-  if (name === 'ncr-list') { renderList(); populateSelects(); }
-  if (name === 'dashboard') updateDashboard();
-  if (name === 'settings') renderSettings();
-  if (name === 'new-ncr' && editingIndex < 0) {
-    generateDocNumber(); populateSelects();
-    const pageTitle = document.querySelector('#page-new-ncr .page-title');
-    const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
-    if (pageTitle) pageTitle.textContent = '➕ ออก NCR ใหม่';
-    if (pageSubtitle) pageSubtitle.textContent = 'Non-Conformance Report - ใบรายงานสิ่งที่ไม่เป็นไปตามข้อกำหนด';
+  // Bug fix (แท็บกดแล้วค้าง): ครอบ try/catch เพื่อไม่ให้ error ระหว่าง render
+  // ทำให้การสลับหน้าค้างกลางทาง (แท็บ active แต่เนื้อหาไม่มา)
+  try {
+    if (name === 'ncr-list') { renderList(); populateSelects(); }
+    if (name === 'dashboard') updateDashboard();
+    if (name === 'settings') renderSettings();
+    if (name === 'new-ncr' && editingIndex < 0) {
+      generateDocNumber(); populateSelects();
+      const pageTitle = document.querySelector('#page-new-ncr .page-title');
+      const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
+      if (pageTitle) pageTitle.textContent = '➕ ออก NCR ใหม่';
+      if (pageSubtitle) pageSubtitle.textContent = 'Non-Conformance Report - ใบรายงานสิ่งที่ไม่เป็นไปตามข้อกำหนด';
+    }
+  } catch(e) {
+    console.error('showPage render error (' + name + '):', e);
   }
+}
+
+// Bug fix (หน้าแก้ไขค้าง): เมื่อผู้ใช้กดแท็บ "ออก NCR ใหม่" เอง ให้ออกจากโหมดแก้ไขและล้างฟอร์มเสมอ
+// (editNCR ยังเรียก showPage('new-ncr') ตรงๆ เหมือนเดิม จึงไม่กระทบโหมดแก้ไข)
+function startNewNCR() {
+  if (editingIndex >= 0) clearForm(); // clearForm ตั้ง editingIndex = -1 ให้ด้วย
+  showPage('new-ncr');
 }
 
 function closeModal(id) {
@@ -3415,6 +3438,31 @@ function showAlert(msg) {
   el.textContent = msg;
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
+}
+
+// Bug fix (freeze): toast แจ้งเตือนสีแดงบนหน้าจอ — ใช้แทน alert() ตอน validation ไม่ผ่าน
+function showErrorToast(msg) {
+  const old = document.getElementById('err-toast');
+  if (old) old.remove();
+  const el = document.createElement('div');
+  el.id = 'err-toast';
+  el.className = 'alert';
+  el.style.cssText = 'position:fixed;top:80px;right:24px;z-index:9999;min-width:280px;max-width:90vw;'
+    + 'background:rgba(244,67,54,.12);border:1px solid #f44336;color:#ff8a80;'
+    + 'box-shadow:0 4px 20px rgba(0,0,0,.4);font-weight:600';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// Bug fix: เลื่อนหน้าจอไปที่ช่องที่ยังกรอกไม่ครบ + ไฮไลต์ขอบแดงชั่วคราว
+function focusField(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  try { el.scrollIntoView({behavior:'smooth', block:'center'}); } catch(e) {}
+  el.focus();
+  el.style.borderColor = '#f44336';
+  setTimeout(() => { el.style.borderColor = ''; }, 4000);
 }
 
 // Close modal on overlay click
@@ -3629,13 +3677,14 @@ document.addEventListener('click', function(e) {
         const docNum = document.getElementById('doc-number').value;
         
         // เรียกใช้ฟังก์ชันเดิมก่อน (await เพราะเป็น async)
-        // Bug #7 fix: ใช้ try/catch เพื่อป้องกัน QR แสดงเมื่อบันทึกล้มเหลว
+        // Bug fix (freeze): เดิมถือว่า "ไม่ throw = สำเร็จ" ทำให้ validation ไม่ผ่านก็ยังเด้ง QR modal
+        // ตอนนี้ saveNCR คืนค่า true เฉพาะเมื่อบันทึกสำเร็จจริงเท่านั้น
         let saveOk = false;
         try {
-            await originalSaveNCR();
-            saveOk = true;
+            saveOk = (await originalSaveNCR()) === true;
         } catch(err) {
             console.error('saveNCR error:', err);
+            if (typeof showErrorToast === 'function') showErrorToast('⚠️ บันทึกไม่สำเร็จ: ' + err.message);
         }
         
         // หลังจากบันทึกสำเร็จเท่านั้นจึงแสดง QR
@@ -3674,16 +3723,35 @@ document.addEventListener('click', function(e) {
         `;
         document.body.insertAdjacentHTML('beforeend', modalHtml);
 
+        // Bug fix: modal สร้างทีหลัง ไม่ได้รับ handler "คลิกพื้นหลังเพื่อปิด" ตอนโหลดหน้า — ผูกให้ตรงนี้
+        const qrOverlay = document.getElementById('qr-modal');
+        if (qrOverlay) {
+            qrOverlay.addEventListener('click', e => { if (e.target === qrOverlay) qrOverlay.remove(); });
+        }
+
         // สร้าง QR Code
+        // Bug fix (freeze): ถ้าไลบรารี qrcode.js โหลดจาก CDN ไม่สำเร็จ อย่า throw — แสดงลิงก์ให้คัดลอกแทน
         setTimeout(() => {
-            new QRCode(document.getElementById("qrcode-container"), {
-                text: replyUrl,
-                width: 200,
-                height: 200,
-                colorDark : "#000000",
-                colorLight : "#ffffff",
-                correctLevel : QRCode.CorrectLevel.H
-            });
+            const container = document.getElementById("qrcode-container");
+            if (!container) return;
+            if (typeof QRCode === 'undefined') {
+                container.innerHTML = '<div style="color:#b45309;font-size:.85rem;padding:12px;text-align:center">'
+                    + '⚠️ สร้าง QR ไม่สำเร็จ (โหลดไลบรารีไม่ได้)<br>ใช้ปุ่ม "คัดลอกลิงก์" ด้านล่างแทนได้เลย</div>';
+                return;
+            }
+            try {
+                new QRCode(container, {
+                    text: replyUrl,
+                    width: 200,
+                    height: 200,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : QRCode.CorrectLevel.H
+                });
+            } catch(e) {
+                console.error('QRCode render error:', e);
+                container.innerHTML = '<div style="color:#b45309;font-size:.85rem;padding:12px;text-align:center">⚠️ สร้าง QR ไม่สำเร็จ — ใช้ปุ่มคัดลอกลิงก์แทน</div>';
+            }
         }, 100);
     };
 
