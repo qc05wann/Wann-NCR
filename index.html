@@ -1513,30 +1513,37 @@ async function loadData() {
     try {
       const mergePromises = ncrList.map(async (ncr, idx) => {
         if (!ncr || !ncr.id) return;
-        if (!ncr.supplierReply) {
-          try {
-            const rSnap = await dbRef.supplierReply(ncr.id).once('value');
-            if (rSnap.exists()) {
-              const r = rSnap.val();
-              if (r.supplierReply)      ncrList[idx].supplierReply      = r.supplierReply;
-              if (r.supplierCA)         ncrList[idx].supplierCA         = r.supplierCA;
-              if (r.supplierPreventive) ncrList[idx].supplierPreventive = r.supplierPreventive;
-              if (r.supplierReplyDate)  ncrList[idx].supplierReplyDate  = r.supplierReplyDate;
-              if (r.supplierPerson)     ncrList[idx].supplierPerson     = r.supplierPerson;
-              if (r.supplierPosition)   ncrList[idx].supplierPosition   = r.supplierPosition;
-              if (r.actionStartDate)    ncrList[idx].actionStartDate    = r.actionStartDate;
-              if (r.actionDuration)     ncrList[idx].actionDuration     = r.actionDuration;
-              if (r.auditDueDate)       ncrList[idx].auditDueDate       = r.auditDueDate;
-              if (r.fixAcknowledgeDate) ncrList[idx].fixAcknowledgeDate = r.fixAcknowledgeDate;
-              // Supplier ตอบแล้วแต่สถานะยังค้าง waiting-reply/open → เลื่อนเป็น waiting-audit
-              if (r.supplierReply && (ncrList[idx].status === 'waiting-reply' || ncrList[idx].status === 'open')) {
-                ncrList[idx].status = 'waiting-audit';
-              }
-              // persist ข้อมูลที่ merge แล้วกลับเข้า ncr_list ด้วยสิทธิ์ admin (login แล้ว เขียนได้)
-              try { await dbRef.ncrItem(ncr.id).update(ncrList[idx]); } catch(pe) { console.warn('persist merged reply ' + ncr.id + ':', pe.message); }
-            }
-          } catch(e) { console.warn('Merge reply for ' + ncr.id + ':', e.message); }
-        }
+        const needFirstMerge  = !ncr.supplierReply;          // ยังไม่เคยมีคำตอบใน ncr_list
+        const waitingRevision = !!ncr.returnRequested;       // ส่งกลับให้ Supplier แก้ไข รอฉบับใหม่
+        if (!needFirstMerge && !waitingRevision) return;
+        try {
+          const rSnap = await dbRef.supplierReply(ncr.id).once('value');
+          if (!rSnap.exists()) return;
+          const r = rSnap.val();
+          // กรณีส่งกลับให้แก้: ดึงเฉพาะฉบับที่ Supplier ส่ง "หลัง" เวลาที่ QC ส่งกลับเท่านั้น
+          if (waitingRevision && !(r.updatedAt && ncr.returnedAt && r.updatedAt > ncr.returnedAt)) return;
+          if (r.supplierReply)      ncrList[idx].supplierReply      = r.supplierReply;
+          if (r.supplierCA)         ncrList[idx].supplierCA         = r.supplierCA;
+          if (r.supplierPreventive) ncrList[idx].supplierPreventive = r.supplierPreventive;
+          if (r.supplierReplyDate)  ncrList[idx].supplierReplyDate  = r.supplierReplyDate;
+          if (r.supplierPerson)     ncrList[idx].supplierPerson     = r.supplierPerson;
+          if (r.supplierPosition)   ncrList[idx].supplierPosition   = r.supplierPosition;
+          if (r.actionStartDate)    ncrList[idx].actionStartDate    = r.actionStartDate;
+          if (r.actionDuration)     ncrList[idx].actionDuration     = r.actionDuration;
+          if (r.auditDueDate)       ncrList[idx].auditDueDate       = r.auditDueDate;
+          if (r.fixAcknowledgeDate) ncrList[idx].fixAcknowledgeDate = r.fixAcknowledgeDate;
+          // Supplier ตอบแล้วแต่สถานะยังค้าง waiting-reply/open → เลื่อนเป็น waiting-audit
+          if (r.supplierReply && (ncrList[idx].status === 'waiting-reply' || ncrList[idx].status === 'open')) {
+            ncrList[idx].status = 'waiting-audit';
+          }
+          // ได้รับฉบับแก้ไขแล้ว → ปลดธงส่งกลับ
+          if (waitingRevision) {
+            ncrList[idx].returnRequested = false;
+            ncrList[idx].revisedAt = r.updatedAt || new Date().toISOString();
+          }
+          // persist ข้อมูลที่ merge แล้วกลับเข้า ncr_list ด้วยสิทธิ์ admin (login แล้ว เขียนได้)
+          try { await dbRef.ncrItem(ncr.id).update(ncrList[idx]); } catch(pe) { console.warn('persist merged reply ' + ncr.id + ':', pe.message); }
+        } catch(e) { console.warn('Merge reply for ' + ncr.id + ':', e.message); }
       });
       await Promise.all(mergePromises);
     } catch(e) { console.warn('Merge supplier replies skipped:', e.message); }
@@ -2309,7 +2316,7 @@ function viewNCR(idx) {
 
   // Step completion checks
   const step1Done = !!(n.bp && n.defectDetail);
-  const step2Done = !!(n.supplierReply || n.rootCause);
+  const step2Done = !!(n.supplierReply || n.rootCause) && !n.returnRequested; // ส่งกลับให้แก้ = ขั้นตอน 2 ยังไม่จบ
   const step3Done = !!(n.auditResult || n.auditorSignDate);
   const step4Done = !!(n.closureAccept !== undefined || n.closureReject !== undefined || n.status === 'closed');
 
@@ -2479,6 +2486,25 @@ function viewNCR(idx) {
         <span id="step2-save-ok" style="color:var(--success);font-size:.85rem;display:none">✅ บันทึกแล้ว</span>
         <button class="btn btn-info btn-sm" style="margin-left:auto" onclick="switchStep(3)">ไปขั้นตอนที่ 3 →</button>
       </div>
+      <!-- ส่งกลับให้ Supplier แก้ไข (กรณีตอบกลับมาไม่ครบถ้วน) -->
+      <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border)">
+        ${n.returnRequested ? `
+          <div style="background:#fff8e1;border:2px solid #f59e0b;border-radius:10px;padding:12px 16px;color:#92400e">
+            <div style="font-weight:700">⏳ ส่งกลับให้ Supplier แก้ไขแล้ว — รอการตอบกลับฉบับใหม่</div>
+            <div style="font-size:.85rem;margin-top:6px">📅 ส่งกลับเมื่อ: ${n.returnedAt ? new Date(n.returnedAt).toLocaleString('th-TH') : '-'}</div>
+            <div style="font-size:.85rem;margin-top:4px;white-space:pre-wrap">📝 เหตุผล: ${escapeHTML(n.returnReason || '-')}</div>
+            <div style="font-size:.8rem;margin-top:8px;color:#b45309">Supplier ใช้ลิงก์/QR เดิมได้เลย — ระบบจะแสดงเหตุผลนี้และเติมข้อมูลเดิมให้แก้ไขต่อ</div>
+          </div>` : `
+          <button class="btn btn-warning btn-sm" onclick="toggleReturnBox()">↩️ ส่งกลับให้ Supplier แก้ไข</button>
+          <div id="return-reason-box" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+            <label style="font-size:.82rem;font-weight:600;display:block;margin-bottom:6px">เหตุผลที่ส่งกลับ (Supplier จะเห็นข้อความนี้ในหน้าตอบกลับ) <span style="color:var(--danger)">*</span></label>
+            <textarea id="return-reason-text" rows="2" placeholder="เช่น ยังไม่ได้ระบุมาตรการป้องกัน (Preventive Action) / กำหนดวันเริ่มดำเนินการไม่ชัดเจน..." style="width:100%"></textarea>
+            <div style="display:flex;gap:8px;margin-top:10px">
+              <button class="btn btn-danger btn-sm" onclick="returnToSupplier(${idx})">📤 ยืนยันส่งกลับ</button>
+              <button class="btn btn-secondary btn-sm" onclick="toggleReturnBox()">ยกเลิก</button>
+            </div>
+          </div>`}
+      </div>
     </div>
 
     <!-- STEP 3 PANEL -->
@@ -2587,6 +2613,31 @@ async function saveStep2(idx) {
   await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step2-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
+}
+
+// ==================== ส่งกลับให้ SUPPLIER แก้ไข ====================
+function toggleReturnBox() {
+  const box = document.getElementById('return-reason-box');
+  if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+
+async function returnToSupplier(idx) {
+  const reasonEl = document.getElementById('return-reason-text');
+  const reason = reasonEl ? reasonEl.value.trim() : '';
+  if (!reason) {
+    showErrorToast('⚠️ กรุณาระบุเหตุผลที่ส่งกลับ เพื่อให้ Supplier รู้ว่าต้องแก้ไขจุดไหน');
+    if (reasonEl) reasonEl.focus();
+    return;
+  }
+  const n = ncrList[idx];
+  n.returnRequested = true;
+  n.returnReason    = reason;
+  n.returnedAt      = new Date().toISOString();
+  n.status          = 'waiting-reply';   // กลับไปสถานะรอตอบกลับ
+  n.updatedAt       = n.returnedAt;
+  await saveData(); updateDashboard(); renderList();
+  showAlert('↩️ ส่งกลับให้ Supplier แก้ไขแล้ว: ' + n.id);
+  viewNCR(idx); // รีเฟรช modal ให้เห็นป้ายสถานะส่งกลับ
 }
 
 async function saveStep3(idx) {
@@ -3839,6 +3890,18 @@ document.addEventListener('click', function(e) {
                     noticeFormPage.insertBefore(notice, noticeFormPage.firstChild);
                 }
 
+                // ฟีเจอร์ส่งกลับให้แก้ไข: แสดงเหตุผลจาก QC ให้ Supplier เห็นชัดเจน
+                if (ncr.returnRequested && !document.getElementById('reply-return-banner')) {
+                    const rb = document.createElement('div');
+                    rb.id = 'reply-return-banner';
+                    rb.style.cssText = 'background:#fff8e1;border:2px solid #f59e0b;border-radius:10px;padding:14px 18px;margin-bottom:16px;color:#92400e;font-family:Sarabun,sans-serif';
+                    rb.innerHTML = '<div style="font-weight:700;font-size:1rem">⚠️ QC ขอให้แก้ไขข้อมูลตอบกลับ</div>'
+                        + '<div style="font-size:.9rem;margin-top:6px;white-space:pre-wrap"><b>เหตุผล:</b> ' + escapeHTML(ncr.returnReason || '-') + '</div>'
+                        + '<div style="font-size:.82rem;margin-top:8px;color:#b45309">ข้อมูลที่เคยส่งถูกเติมไว้ในฟอร์มด้านล่างแล้ว — แก้ไขตามเหตุผลข้างต้น แล้วกด "ส่งข้อมูลตอบกลับ" อีกครั้ง</div>';
+                    const noticeEl = document.getElementById('reply-notice');
+                    if (noticeEl && noticeEl.parentNode) noticeEl.parentNode.insertBefore(rb, noticeEl.nextSibling);
+                }
+
                 // แสดงข้อมูล NCR แบบ read-only card
                 const formPage = document.getElementById('page-new-ncr');
                 if (formPage && !document.getElementById('reply-info-block')) {
@@ -4007,6 +4070,39 @@ document.addEventListener('click', function(e) {
                       </div>
                     `;
                     formPage.appendChild(replyForm);
+
+                    // ฟีเจอร์ส่งกลับให้แก้ไข: เติมข้อมูลตอบกลับเดิมลงฟอร์ม (จาก supplier_reply ก่อน ถ้าไม่มีใช้ข้อมูลใน NCR)
+                    try {
+                        let prev = null;
+                        try {
+                            const prevSnap = await dbRef.supplierReply(ncrId).once('value');
+                            if (prevSnap.exists()) prev = prevSnap.val();
+                        } catch(pe) { console.warn('อ่านคำตอบเดิมไม่ได้:', pe.message); }
+                        if (!prev && ncr.supplierReply) prev = ncr;
+                        if (prev) {
+                            const setV = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
+                            const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+                            setV('reply-supplier-date',        prev.supplierReplyDate);
+                            setV('reply-supplier-person',      prev.supplierPerson);
+                            setV('reply-supplier-position',    prev.supplierPosition);
+                            setV('reply-action-start-date',    prev.actionStartDate);
+                            setV('reply-action-duration',      prev.actionDuration);
+                            setV('reply-audit-due-date',       prev.auditDueDate);
+                            setV('reply-fix-acknowledge-date', prev.fixAcknowledgeDate);
+                            setV('reply-supplier-reply',       prev.supplierReply);
+                            setV('reply-supplier-ca',          prev.supplierCA);
+                            setV('reply-supplier-preventive',  prev.supplierPreventive);
+                            setC('reply-action-return',  prev.actionReturn);
+                            setC('reply-action-special', prev.actionSpecial);
+                            setC('reply-action-rework',  prev.actionRework);
+                            setC('reply-action-destroy', prev.actionDestroy);
+                            if (prev.actionOther) {
+                                setC('reply-action-other-chk', true);
+                                const ot = document.getElementById('reply-action-other-text');
+                                if (ot) { ot.value = prev.actionOther; ot.style.display = 'inline-block'; }
+                            }
+                        }
+                    } catch(e) { console.warn('prefill reply form:', e.message); }
 
                     document.getElementById('reply-save-btn').onclick = async function() {
                         const rootCause = document.getElementById('reply-supplier-reply').value.trim();
