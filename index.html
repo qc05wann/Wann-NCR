@@ -1507,11 +1507,13 @@ async function loadData() {
     updateLogoDisplay();
 
     // Merge supplier replies เข้า ncrList (อ่านทีละรายการเพื่อไม่ติด Firebase Rules)
+    // Bug fix (ข้อมูล Supplier ไม่ถึงต้นทาง): เดิมเช็คเฉพาะ NCR สถานะ waiting-audit/closed
+    // แต่ถ้า Rules บล็อกไม่ให้ Supplier อัปเดตสถานะใน ncr_list สถานะจะค้างที่ waiting-reply
+    // → ต้องเช็ค supplier_reply ของ "ทุกใบที่ยังไม่มีคำตอบ" แล้วอัปเดตสถานะ + persist กลับด้วยสิทธิ์ admin
     try {
       const mergePromises = ncrList.map(async (ncr, idx) => {
         if (!ncr || !ncr.id) return;
-        // อ่านเฉพาะ NCR ที่สถานะบ่งว่า supplier ตอบแล้ว แต่ยังไม่มีข้อมูลใน ncrList
-        if ((ncr.status === 'waiting-audit' || ncr.status === 'closed') && !ncr.supplierReply) {
+        if (!ncr.supplierReply) {
           try {
             const rSnap = await dbRef.supplierReply(ncr.id).once('value');
             if (rSnap.exists()) {
@@ -1526,6 +1528,12 @@ async function loadData() {
               if (r.actionDuration)     ncrList[idx].actionDuration     = r.actionDuration;
               if (r.auditDueDate)       ncrList[idx].auditDueDate       = r.auditDueDate;
               if (r.fixAcknowledgeDate) ncrList[idx].fixAcknowledgeDate = r.fixAcknowledgeDate;
+              // Supplier ตอบแล้วแต่สถานะยังค้าง waiting-reply/open → เลื่อนเป็น waiting-audit
+              if (r.supplierReply && (ncrList[idx].status === 'waiting-reply' || ncrList[idx].status === 'open')) {
+                ncrList[idx].status = 'waiting-audit';
+              }
+              // persist ข้อมูลที่ merge แล้วกลับเข้า ncr_list ด้วยสิทธิ์ admin (login แล้ว เขียนได้)
+              try { await dbRef.ncrItem(ncr.id).update(ncrList[idx]); } catch(pe) { console.warn('persist merged reply ' + ncr.id + ':', pe.message); }
             }
           } catch(e) { console.warn('Merge reply for ' + ncr.id + ':', e.message); }
         }
@@ -1565,10 +1573,19 @@ async function saveData() {
 }
 
 // Supplier Reply — เขียนลง Firebase (ไม่ต้อง login)
-function saveSupplierReplyToPath(ncrId, data) {
+// Bug fix (ข้อมูล Supplier ไม่ถึงต้นทาง): เดิมยิง update() แบบไม่ await — Firebase ปฏิเสธ (เช่น PERMISSION_DENIED)
+// แบบ async ทำให้ try/catch จับไม่ได้ ฟังก์ชันเลยคืน true เสมอ Supplier เห็น "ส่งสำเร็จ" ทั้งที่ข้อมูลไม่ได้เขียนจริง
+async function saveSupplierReplyToPath(ncrId, data) {
+  // ส่วนสำคัญ: เขียนลง supplier_reply (path ที่เปิดให้ Supplier เขียนได้ตาม Rules)
   try {
-    dbRef.supplierReply(ncrId).update(data);
-    // อัปเดต status + ข้อมูลตอบกลับใน NCR list ด้วย เพื่อให้ admin เห็นข้อมูลทันที
+    await dbRef.supplierReply(ncrId).update(data);
+  } catch(e) {
+    console.error('saveSupplierReplyToPath (supplier_reply) error:', e);
+    return { ok: false, error: (e && (e.code || e.message)) || String(e) };
+  }
+  // ส่วนเสริม: อัปเดต status + ข้อมูลใน ncr_list เพื่อให้ admin เห็นทันที
+  // ถ้า Rules บล็อกไม่ให้ Supplier เขียน ncr_list ก็ไม่เป็นไร — ฝั่ง admin จะ merge จาก supplier_reply ให้เอง
+  try {
     const ncrUpdate = {
       status: data.status || 'waiting-audit',
       updatedAt: data.updatedAt || new Date().toISOString()
@@ -1588,12 +1605,11 @@ function saveSupplierReplyToPath(ncrId, data) {
     if (data.actionRework !== undefined)       ncrUpdate.actionRework       = data.actionRework;
     if (data.actionDestroy !== undefined)      ncrUpdate.actionDestroy      = data.actionDestroy;
     if (data.actionOther !== undefined)        ncrUpdate.actionOther        = data.actionOther;
-    dbRef.ncrItem(ncrId).update(ncrUpdate);
-    return true;
+    await dbRef.ncrItem(ncrId).update(ncrUpdate);
   } catch(e) {
-    console.error('saveSupplierReplyToPath (Firebase) error:', e);
-    return false;
+    console.warn('ncr_list update ถูก Rules บล็อก (ปกติสำหรับ Supplier) — admin จะ merge จาก supplier_reply แทน:', e && e.message);
   }
+  return { ok: true };
 }
 
 // โหลด NCR สำหรับ Supplier (ไม่ต้อง login)
@@ -4001,7 +4017,8 @@ document.addEventListener('click', function(e) {
                         btn.textContent = '⏳ กำลังส่ง...';
 
                         const actionOtherChk = document.getElementById('reply-action-other-chk');
-                        const ok = saveSupplierReplyToPath(ncrId, {
+                        // Bug fix (ข้อมูล Supplier ไม่ถึงต้นทาง): await ผลการเขียนจริงจาก Firebase
+                        const res = await saveSupplierReplyToPath(ncrId, {
                           actionReturn:  document.getElementById('reply-action-return').checked,
                           actionSpecial: document.getElementById('reply-action-special').checked,
                           actionRework:  document.getElementById('reply-action-rework').checked,
@@ -4028,7 +4045,7 @@ document.addEventListener('click', function(e) {
                           document.body.appendChild(t);
                           setTimeout(() => t.remove(), 3500);
                         };
-                        if (ok) {
+                        if (res && res.ok) {
                           btn.textContent = '✅ ส่งแล้ว';
                           document.getElementById('reply-ok').style.display = 'inline';
                           document.querySelectorAll('#supplier-reply-form input, #supplier-reply-form textarea').forEach(el => el.disabled = true);
@@ -4037,7 +4054,13 @@ document.addEventListener('click', function(e) {
                         } else {
                           btn.disabled = false;
                           btn.textContent = '💾 ส่งข้อมูลตอบกลับ';
-                          showReplyToast('❌ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้ง', '#e53935');
+                          const errMsg = res && res.error ? res.error : 'ไม่ทราบสาเหตุ';
+                          // Bug fix: แจ้ง error จริงให้เห็น — โดยเฉพาะกรณี Firebase Rules ไม่อนุญาตให้เขียน
+                          if (String(errMsg).toUpperCase().includes('PERMISSION')) {
+                            showReplyToast('❌ ระบบไม่อนุญาตให้บันทึก (Firebase Rules) — กรุณาแจ้งผู้ออก NCR', '#e53935');
+                          } else {
+                            showReplyToast('❌ ส่งไม่สำเร็จ: ' + errMsg + ' — กรุณาลองใหม่', '#e53935');
+                          }
                         }
                     };
                 }
