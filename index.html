@@ -4423,7 +4423,9 @@ document.addEventListener('click', function(e) {
                     `;
                     formPage.appendChild(replyForm);
 
-                    // ฟีเจอร์ส่งกลับให้แก้ไข: เติมข้อมูลตอบกลับเดิมลงฟอร์ม (จาก supplier_reply ก่อน ถ้าไม่มีใช้ข้อมูลใน NCR)
+                    // เติมข้อมูลตอบกลับเดิมลงฟอร์ม "เฉพาะกรณี QC ตีกลับให้แก้ไข" เท่านั้น
+                    // (ลิงก์ปกติ Supplier ต้องเจอฟอร์มเปล่า — ข้อมูลที่ QC เคยกรอกในขั้นตอนที่ 2 ต้องไม่โผล่มาให้เห็น)
+                    if (ncr.returnRequested) {
                     try {
                         let prev = null;
                         try {
@@ -4455,6 +4457,7 @@ document.addEventListener('click', function(e) {
                             }
                         }
                     } catch(e) { console.warn('prefill reply form:', e.message); }
+                    } // ปิดเงื่อนไข ncr.returnRequested
 
                     document.getElementById('reply-save-btn').onclick = async function() {
                         const rootCause = document.getElementById('reply-supplier-reply').value.trim();
