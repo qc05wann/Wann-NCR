@@ -1360,6 +1360,8 @@ const dbRef = {
   ncrItem:       (id) => db.ref('ncr_system/ncr_list/' + id.replace(/\//g, '_')),
   bpNames:       () => db.ref('ncr_system/bp_names'),
   supplierReply: (id) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_')),
+  // ประวัติการตอบกลับ: เก็บใต้ supplier_reply เพื่อให้ Supplier เขียนได้ตาม Rules เดิม (สิทธิ์ครอบคลุมลูกทั้งหมด)
+  supplierReplyHistory: (id, key) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_') + '/history/' + key),
   signatures:    () => db.ref('ncr_system/signatures'),
   companyLogo:   () => db.ref('ncr_system/company_logo'),
 };
@@ -1589,6 +1591,14 @@ async function saveSupplierReplyToPath(ncrId, data) {
   } catch(e) {
     console.error('saveSupplierReplyToPath (supplier_reply) error:', e);
     return { ok: false, error: (e && (e.code || e.message)) || String(e) };
+  }
+  // Audit Trail: ถ่ายสำเนาการส่งครั้งนี้เก็บเป็นประวัติ (key = timestamp มิลลิวินาที เรียงตามเวลาได้)
+  // เขียน "หลัง" ฉบับหลักสำเร็จ เพื่อให้ผ่าน .validate (supplierReply มีอยู่แล้ว ณ จุดนี้)
+  try {
+    const histEntry = Object.assign({}, data, { _event: 'submitted', _at: data.updatedAt || new Date().toISOString() });
+    await dbRef.supplierReplyHistory(ncrId, String(Date.now())).set(histEntry);
+  } catch(e) {
+    console.warn('เก็บประวัติการตอบกลับไม่สำเร็จ (ข้อมูลหลักบันทึกแล้ว):', e && e.message);
   }
   // ส่วนเสริม: อัปเดต status + ข้อมูลใน ncr_list เพื่อให้ admin เห็นทันที
   // ถ้า Rules บล็อกไม่ให้ Supplier เขียน ncr_list ก็ไม่เป็นไร — ฝั่ง admin จะ merge จาก supplier_reply ให้เอง
@@ -2488,6 +2498,9 @@ function viewNCR(idx) {
       </div>
       <!-- ส่งกลับให้ Supplier แก้ไข (กรณีตอบกลับมาไม่ครบถ้วน) -->
       <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border)">
+        <div style="margin-bottom:10px">
+          <button class="btn btn-secondary btn-sm" onclick="showReplyHistory(${idx})">📜 ประวัติการตอบกลับ</button>
+        </div>
         ${n.returnRequested ? `
           <div style="background:#fff8e1;border:2px solid #f59e0b;border-radius:10px;padding:12px 16px;color:#92400e">
             <div style="font-weight:700">⏳ ส่งกลับให้ Supplier แก้ไขแล้ว — รอการตอบกลับฉบับใหม่</div>
@@ -2635,9 +2648,86 @@ async function returnToSupplier(idx) {
   n.returnedAt      = new Date().toISOString();
   n.status          = 'waiting-reply';   // กลับไปสถานะรอตอบกลับ
   n.updatedAt       = n.returnedAt;
+  // Audit Trail: จดเหตุการณ์ส่งกลับสะสมไว้ (ไม่ทับของเก่า — ตีกลับกี่รอบก็ตามดูได้หมด)
+  if (!Array.isArray(n.returnHistory)) n.returnHistory = [];
+  n.returnHistory.push({ _event: 'returned', _at: n.returnedAt, reason: reason });
   await saveData(); updateDashboard(); renderList();
   showAlert('↩️ ส่งกลับให้ Supplier แก้ไขแล้ว: ' + n.id);
   viewNCR(idx); // รีเฟรช modal ให้เห็นป้ายสถานะส่งกลับ
+}
+
+// ==================== ประวัติการตอบกลับ (AUDIT TRAIL) ====================
+async function showReplyHistory(idx) {
+  const n = ncrList[idx];
+  if (!n) return;
+  const events = [];
+
+  // 1) เหตุการณ์ QC ส่งกลับ (เก็บอยู่บน NCR record)
+  (Array.isArray(n.returnHistory) ? n.returnHistory : []).forEach(ev => {
+    if (ev && ev._at) events.push({ at: ev._at, type: 'returned', reason: ev.reason || '-' });
+  });
+
+  // 2) เหตุการณ์ Supplier ส่งคำตอบ (เก็บอยู่ใต้ supplier_reply/history)
+  let latestReply = null;
+  try {
+    const snap = await dbRef.supplierReply(n.id).once('value');
+    if (snap.exists()) {
+      const r = snap.val();
+      latestReply = r;
+      if (r.history && typeof r.history === 'object') {
+        Object.keys(r.history).forEach(k => {
+          const h = r.history[k];
+          if (h) events.push({ at: h._at || new Date(parseInt(k,10)).toISOString(), type: 'submitted', data: h });
+        });
+      } else if (r.supplierReply) {
+        // ข้อมูลเก่าก่อนเริ่มเก็บประวัติ — แสดงฉบับปัจจุบันเป็น 1 เหตุการณ์
+        events.push({ at: r.updatedAt || n.updatedAt || '', type: 'submitted', data: r, legacy: true });
+      }
+    }
+  } catch(e) { console.warn('อ่านประวัติไม่สำเร็จ:', e.message); }
+
+  events.sort((a,b) => String(a.at).localeCompare(String(b.at))); // เก่า → ใหม่
+  const fmt = iso => iso ? new Date(iso).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
+  const esc = escapeHTML;
+  const field = (label, val) => val ? `<div style="margin-top:4px"><span style="color:var(--text-muted);font-size:.78rem">${label}:</span> <span style="font-size:.85rem;white-space:pre-wrap">${esc(val)}</span></div>` : '';
+
+  const rows = events.length ? events.map((ev, i) => {
+    if (ev.type === 'returned') {
+      return `<div style="border-left:3px solid #f59e0b;padding:10px 14px;margin-bottom:12px;background:rgba(245,158,11,.07);border-radius:0 8px 8px 0">
+        <div style="font-weight:700;color:#b45309">↩️ QC ส่งกลับให้แก้ไข <span style="font-weight:400;font-size:.78rem;color:var(--text-muted)">— ${fmt(ev.at)}</span></div>
+        <div style="font-size:.85rem;margin-top:4px;white-space:pre-wrap">เหตุผล: ${esc(ev.reason)}</div>
+      </div>`;
+    }
+    const d = ev.data || {};
+    return `<div style="border-left:3px solid var(--success);padding:10px 14px;margin-bottom:12px;background:rgba(61,186,111,.06);border-radius:0 8px 8px 0">
+      <div style="font-weight:700;color:var(--success)">📨 Supplier ส่งคำตอบ${ev.legacy ? ' (ฉบับก่อนเริ่มเก็บประวัติ)' : ''} <span style="font-weight:400;font-size:.78rem;color:var(--text-muted)">— ${fmt(ev.at)}</span></div>
+      ${field('ผู้รับผิดชอบ', d.supplierPerson ? d.supplierPerson + (d.supplierPosition ? ' (' + d.supplierPosition + ')' : '') : '')}
+      ${field('สาเหตุ (Root Cause)', d.supplierReply)}
+      ${field('การแก้ไข (CA)', d.supplierCA)}
+      ${field('การป้องกัน (PA)', d.supplierPreventive)}
+      ${field('เริ่มดำเนินการ', d.actionStartDate)}${field('ระยะเวลา', d.actionDuration)}
+    </div>`;
+  }).join('') : '<div style="text-align:center;color:var(--text-muted);padding:24px">ยังไม่มีประวัติการตอบกลับ</div>';
+
+  // สร้าง modal (ปิดได้ทั้งปุ่ม ✕ และแตะพื้นหลัง)
+  const old = document.getElementById('reply-history-modal');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'reply-history-modal';
+  overlay.className = 'modal-overlay show';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:640px;max-height:82vh;overflow-y:auto">
+      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700">📜 ประวัติการตอบกลับ — ${esc(n.id)}</div>
+        <button class="modal-close" onclick="document.getElementById('reply-history-modal').remove()">✕</button>
+      </div>
+      <div style="padding:16px 20px">
+        <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:14px">เรียงจากเก่า → ใหม่ (${events.length} เหตุการณ์) — ใช้เป็นหลักฐาน Audit Trail ได้</div>
+        ${rows}
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
 }
 
 async function saveStep3(idx) {
