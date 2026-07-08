@@ -777,6 +777,9 @@
   <div class="page-title">📊 แดชบอร์ด</div>
   <div class="page-subtitle">สรุปสถานะการออก NCR ทั้งหมด</div>
 
+  <!-- แจ้งเตือนเกินกำหนด / ตามงาน -->
+  <div id="overdue-banner" style="display:none;background:rgba(244,67,54,.1);border:2px solid #e53935;border-radius:12px;padding:14px 18px;margin-bottom:16px"></div>
+
   <!-- NCR Stats -->
   <div style="font-size:.8rem;font-weight:700;color:var(--text-muted);margin-bottom:8px;letter-spacing:.05em">NCR — ออกให้ Supplier (ภายนอก)</div>
   <div class="stats-grid" id="stats-grid" style="margin-bottom:20px">
@@ -814,7 +817,10 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">NCR ล่าสุด 5 รายการ</div>
-      <button class="btn btn-secondary btn-sm" onclick="showPage('ncr-list')">ดูทั้งหมด →</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="showSupplierScorecard()">📊 สรุปผล Supplier</button>
+        <button class="btn btn-secondary btn-sm" onclick="showPage('ncr-list')">ดูทั้งหมด →</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table id="dashboard-table">
@@ -1111,6 +1117,21 @@
   <div class="page-title">⚙️ ตั้งค่า</div>
   <div class="page-subtitle">จัดการรายชื่อและแผนก</div>
 
+  <!-- สำรอง / กู้คืนข้อมูล -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header"><div class="card-title">📦 สำรองข้อมูล (Backup)</div></div>
+    <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:12px">
+      ดาวน์โหลดข้อมูล NCR ทั้งระบบเป็นไฟล์เดียว เก็บลง Google Drive ไว้ — แนะนำทำทุกสิ้นเดือน
+      (เป็นหลักฐาน retention ของ quality record ตาม ISO ด้วย)
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-success btn-sm" onclick="exportBackup()">⬇️ ดาวน์โหลดไฟล์สำรอง (JSON)</button>
+      <button class="btn btn-warning btn-sm" onclick="document.getElementById('restore-file-input').click()">♻️ กู้คืนจากไฟล์สำรอง</button>
+      <input type="file" id="restore-file-input" accept=".json,application/json" style="display:none" onchange="importBackup(this.files[0]);this.value=''">
+    </div>
+    <div id="backup-status" style="font-size:.82rem;margin-top:10px;color:var(--text-muted)"></div>
+  </div>
+
   <div class="form-grid form-grid-3">
     <!-- Reporters -->
     <div class="card">
@@ -1362,6 +1383,8 @@ const dbRef = {
   supplierReply: (id) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_')),
   // ประวัติการตอบกลับ: เก็บใต้ supplier_reply เพื่อให้ Supplier เขียนได้ตาม Rules เดิม (สิทธิ์ครอบคลุมลูกทั้งหมด)
   supplierReplyHistory: (id, key) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_') + '/history/' + key),
+  // รหัสลับประจำใบ (Reply Token): อ่านได้เฉพาะคน login — Rules ใช้ตรวจว่าลิงก์ตอบกลับเป็นของจริง
+  replyToken: (id) => db.ref('ncr_system/reply_tokens/' + id.replace(/\//g, '_')),
   signatures:    () => db.ref('ncr_system/signatures'),
   companyLogo:   () => db.ref('ncr_system/company_logo'),
 };
@@ -2097,11 +2120,46 @@ function handleImages(files) {
     if (!file.type.startsWith('image/')) return;
     const reader = new FileReader();
     reader.onload = ev => {
-      uploadedImages.push({name: file.name, dataUrl: ev.target.result});
-      renderImageGrid();
+      // บีบอัดรูปอัตโนมัติก่อนเก็บ: รูปกล้องแท็บเล็ต 2-4MB → เหลือหลักร้อย KB
+      // ช่วยยืดอายุพื้นที่ Firebase แผนฟรี (1GB) และทำให้ระบบโหลดเร็วขึ้นมาก
+      compressImage(ev.target.result, (compressed) => {
+        uploadedImages.push({name: file.name, dataUrl: compressed});
+        renderImageGrid();
+      });
     };
     reader.readAsDataURL(file);
   });
+}
+
+// ย่อรูปให้ด้านยาวสุดไม่เกิน 1024px + บันทึกเป็น JPEG คุณภาพ 72%
+// (ยังเห็นรายละเอียดข้อบกพร่องชัดเจน แต่ไฟล์เล็กลง 10-20 เท่า)
+function compressImage(dataUrl, callback) {
+  try {
+    let done = false;
+    const finish = (result) => { if (!done) { done = true; callback(result); } };
+    // กันค้าง: ถ้ารูปไม่โหลดภายใน 5 วินาที ใช้ต้นฉบับไปเลย (การแนบรูปต้องไม่มีทางค้าง)
+    setTimeout(() => finish(dataUrl), 5000);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const MAX = 1024;
+        let w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          const scale = MAX / Math.max(w, h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        const out = canvas.toDataURL('image/jpeg', 0.72);
+        // กันเหนียว: ถ้าบีบแล้วใหญ่กว่าเดิม (เช่นรูปเล็กมากอยู่แล้ว) ใช้ต้นฉบับ
+        finish(out.length < dataUrl.length ? out : dataUrl);
+      } catch(e) { console.warn('compressImage draw error:', e.message); finish(dataUrl); }
+    };
+    img.onerror = () => finish(dataUrl); // อ่านรูปไม่ได้ → ใช้ต้นฉบับ ไม่ให้การแนบรูปพัง
+    img.src = dataUrl;
+  } catch(e) { console.warn('compressImage error:', e.message); callback(dataUrl); }
 }
 function renderImageGrid() {
   const grid = document.getElementById('img-grid');
@@ -2176,6 +2234,7 @@ async function saveNCR() {
     updatedAt: new Date().toISOString()
   };
 
+  const _isNewRecord = editingIndex < 0; // จับสถานะไว้ก่อน editingIndex ถูกรีเซ็ต (ใช้ตัดสินใจสร้าง token)
   if (editingIndex >= 0) {
     // Preserve supplier reply fields that are managed separately
     const existing = ncrList[editingIndex];
@@ -2201,7 +2260,22 @@ async function saveNCR() {
   showPage('ncr-list');
   // Bug fix (QR ชี้เลขผิด): จดเลขที่เอกสาร "จริง" ที่บันทึก — เผื่อกรณีเลขซ้ำแล้วระบบออกเลขใหม่ให้อัตโนมัติ
   window._lastSavedNcrId = ncr.id;
+  // Security: สร้างรหัสลับประจำใบ (32 ตัวอักษรสุ่ม) เฉพาะ "ใบใหม่" เท่านั้น
+  // (ห้ามสร้างซ้ำตอนแก้ไข — ไม่งั้น QR ที่แจก Supplier ไปแล้วจะใช้ไม่ได้)
+  if (_isNewRecord) {
+    try {
+      const tok = generateReplyToken();
+      await dbRef.replyToken(ncr.id).set(tok);
+    } catch(e) { console.warn('สร้าง reply token ไม่สำเร็จ (ลิงก์ยังใช้ได้แบบไม่มี token):', e.message); }
+  }
   return true; // Bug fix: ยืนยันว่าบันทึกสำเร็จจริง (QR wrapper ใช้เช็ก)
+}
+
+// สร้างรหัสลับสุ่ม 32 ตัวอักษร (ใช้ crypto ของเบราว์เซอร์ — เดาไม่ได้)
+function generateReplyToken() {
+  const bytes = new Uint8Array(16);
+  (window.crypto || window.msCrypto).getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 function clearForm() {
@@ -2305,6 +2379,9 @@ function updateDashboard() {
   document.getElementById('statw-waiting-audit').textContent = countsW['waiting-audit'];
   document.getElementById('statw-closed').textContent        = countsW['closed'];
 
+  // ⏰ แจ้งเตือนเกินกำหนด + Supplier เงียบนาน
+  try { updateOverdueBanner(); } catch(e) { console.warn('overdue banner:', e.message); }
+
   // Recent 5
   const tbody = document.getElementById('dashboard-tbody');
   const recent = [...ncrList].sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || '')).slice(0,5);
@@ -2318,6 +2395,185 @@ function updateDashboard() {
       <td><button class="btn btn-info btn-xs" onclick="viewNCR(${ncrList.indexOf(n)})">ดู</button></td>
     </tr>
   `).join('') : '<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:24px">ยังไม่มีรายการ NCR</td></tr>';
+}
+
+// ==================== แจ้งเตือนเกินกำหนด (OVERDUE) ====================
+// แปลงวันที่ 2 รูปแบบที่ใช้ในระบบ → Date object (เที่ยงคืนท้องถิ่น)
+function parseAnyDate(s) {
+  if (!s) return null;
+  try {
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) { const [d,m,y] = s.split('/'); return new Date(+y, +m-1, +d); } // DD/MM/YYYY
+    if (/^\d{4}-\d{2}-\d{2}/.test(s))    { const [y,m,d] = s.slice(0,10).split('-'); return new Date(+y, +m-1, +d); } // YYYY-MM-DD
+    const t = new Date(s); return isNaN(t) ? null : t;
+  } catch(e) { return null; }
+}
+function daysBetween(a, b) { return Math.floor((b - a) / 86400000); }
+
+function updateOverdueBanner() {
+  const banner = document.getElementById('overdue-banner');
+  if (!banner) return;
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // 1) เลยกำหนดตรวจติดตาม: มี auditDueDate < วันนี้ และยังไม่ปิด
+  const overdueAudit = ncrList.filter(n => {
+    if (!n || n.status === 'closed') return false;
+    const due = parseAnyDate(n.auditDueDate);
+    return due && due < today;
+  });
+  // 2) Supplier เงียบนาน: รอตอบกลับเกิน 7 วัน (นับจากวันส่งกลับถ้ามี ไม่งั้นนับจากวันออกเอกสาร)
+  const silent = ncrList.filter(n => {
+    if (!n || (n.status !== 'waiting-reply' && n.status !== 'open')) return false;
+    const base = parseAnyDate(n.returnedAt) || parseAnyDate(n.date);
+    return base && daysBetween(base, today) > 7;
+  });
+
+  if (!overdueAudit.length && !silent.length) { banner.style.display = 'none'; return; }
+  const item = (n, extra) => `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.85rem">
+      <span class="ncr-id">${escapeHTML(n.id)}</span><span style="color:var(--text-muted)">${escapeHTML(n.bp || '')}</span>
+      <span>${extra}</span>
+      <button class="btn btn-info btn-xs" style="margin-left:auto" onclick="viewNCR(${ncrList.indexOf(n)})">ดู</button>
+    </div>`;
+  banner.innerHTML =
+    '<div style="font-weight:700;color:#e53935;font-size:.95rem">⏰ รายการที่ต้องตามงาน (' + (overdueAudit.length + silent.length) + ')</div>'
+    + overdueAudit.map(n => item(n, '🔴 เลยกำหนดตรวจติดตาม ' + daysBetween(parseAnyDate(n.auditDueDate), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('')
+    + silent.map(n => item(n, '🟠 Supplier ยังไม่ตอบกลับ ' + daysBetween(parseAnyDate(n.returnedAt) || parseAnyDate(n.date), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('');
+  banner.style.display = 'block';
+}
+
+// ==================== SUPPLIER SCORECARD ====================
+function computeSupplierStats() {
+  const bySup = {};
+  ncrList.forEach(n => {
+    if (!n || !n.bp || (n.id && n.id.startsWith('NCRW'))) return; // เฉพาะ NCR ภายนอก
+    const s = bySup[n.bp] = bySup[n.bp] || { bp: n.bp, total: 0, open: 0, closed: 0, returns: 0, respDays: [], types: {} };
+    s.total++;
+    if (n.status === 'closed') s.closed++; else s.open++;
+    s.returns += Array.isArray(n.returnHistory) ? n.returnHistory.length : 0;
+    if (n.ncType) s.types[n.ncType] = (s.types[n.ncType] || 0) + 1;
+    const issued = parseAnyDate(n.date), replied = parseAnyDate(n.supplierReplyDate);
+    if (issued && replied && replied >= issued) s.respDays.push(daysBetween(issued, replied));
+  });
+  return Object.values(bySup).map(s => ({
+    ...s,
+    avgResp: s.respDays.length ? (s.respDays.reduce((a,b)=>a+b,0) / s.respDays.length).toFixed(1) : '-',
+    topType: Object.keys(s.types).sort((a,b) => s.types[b]-s.types[a])[0] || '-'
+  })).sort((a,b) => b.total - a.total);
+}
+
+function showSupplierScorecard() {
+  const stats = computeSupplierStats();
+  const rows = stats.length ? stats.map(s => `
+    <tr>
+      <td style="font-weight:600">${escapeHTML(s.bp)}</td>
+      <td style="text-align:center">${s.total}</td>
+      <td style="text-align:center">${s.open}</td>
+      <td style="text-align:center">${s.closed}</td>
+      <td style="text-align:center">${s.returns}</td>
+      <td style="text-align:center">${s.avgResp}</td>
+      <td>${escapeHTML(s.topType)}</td>
+    </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">ยังไม่มีข้อมูล</td></tr>';
+  const old = document.getElementById('scorecard-modal');
+  if (old) old.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'scorecard-modal';
+  overlay.className = 'modal-overlay show';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:820px;max-height:85vh;overflow-y:auto">
+      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:700">📊 สรุปผล Supplier (Scorecard)</div>
+        <button class="modal-close" onclick="document.getElementById('scorecard-modal').remove()">✕</button>
+      </div>
+      <div style="padding:16px 20px">
+        <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:12px">นับเฉพาะ NCR ภายนอก — ใช้ประกอบ Supplier Evaluation ประจำปีได้ | เวลาตอบกลับ = วันออกเอกสาร → วันที่ Supplier ตอบ</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Supplier</th><th>NCR ทั้งหมด</th><th>ค้างอยู่</th><th>ปิดแล้ว</th><th>ถูกตีกลับ</th><th>ตอบเฉลี่ย (วัน)</th><th>ประเภทที่พบบ่อย</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table></div>
+        <div style="margin-top:14px"><button class="btn btn-success btn-sm" onclick="exportScorecardCSV()">⬇️ Export CSV (เปิดใน Excel / Power BI ได้)</button></div>
+      </div>
+    </div>`;
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+}
+
+function exportScorecardCSV() {
+  const stats = computeSupplierStats();
+  const esc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const lines = [
+    ['Supplier','NCR ทั้งหมด','ค้างอยู่','ปิดแล้ว','ถูกตีกลับ (ครั้ง)','เวลาตอบเฉลี่ย (วัน)','ประเภทที่พบบ่อย'].map(esc).join(','),
+    ...stats.map(s => [s.bp, s.total, s.open, s.closed, s.returns, s.avgResp, s.topType].map(esc).join(','))
+  ];
+  // \uFEFF (UTF-8 BOM) ทำให้ Excel เปิดภาษาไทยไม่เพี้ยน
+  const blob = new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'supplier_scorecard_' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+// ==================== สำรอง / กู้คืนข้อมูล (BACKUP) ====================
+async function exportBackup() {
+  const st = document.getElementById('backup-status');
+  if (st) st.textContent = '⏳ กำลังรวบรวมข้อมูล...';
+  // รวบรวมคำตอบ Supplier + ประวัติ ของทุกใบ (อ่านรายใบตามสิทธิ์ Rules)
+  const supplierReplies = {};
+  for (const n of ncrList) {
+    if (!n || !n.id) continue;
+    try {
+      const snap = await dbRef.supplierReply(n.id).once('value');
+      if (snap.exists()) supplierReplies[n.id] = snap.val();
+    } catch(e) { /* อ่านไม่ได้ก็ข้าม — ข้อมูลหลักอยู่ใน ncrList แล้ว */ }
+  }
+  const backup = {
+    _app: 'WannNCR', _version: 1, exportedAt: new Date().toISOString(),
+    ncrList: ncrList, settings: settings, bpNames: BP_NAMES, signatures: signatures,
+    supplierReplies: supplierReplies
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'wannncr_backup_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  if (st) st.textContent = '✅ ดาวน์โหลดไฟล์สำรองแล้ว (' + ncrList.length + ' NCR) — อย่าลืมเก็บเข้า Google Drive';
+}
+
+async function importBackup(file) {
+  if (!file) return;
+  const st = document.getElementById('backup-status');
+  try {
+    const text = await file.text();
+    const b = JSON.parse(text);
+    if (b._app !== 'WannNCR' || !Array.isArray(b.ncrList)) {
+      showErrorToast('⚠️ ไฟล์นี้ไม่ใช่ไฟล์สำรองของ WannNCR');
+      return;
+    }
+    const msg = 'ยืนยันกู้คืนข้อมูลจากไฟล์สำรอง?\n\n'
+      + '• ไฟล์นี้สำรองเมื่อ: ' + (b.exportedAt ? new Date(b.exportedAt).toLocaleString('th-TH') : 'ไม่ทราบ') + '\n'
+      + '• จำนวน NCR ในไฟล์: ' + b.ncrList.length + ' ใบ\n'
+      + '• ข้อมูลปัจจุบันในระบบ (' + ncrList.length + ' ใบ) จะถูกแทนที่ทั้งหมด';
+    if (!confirm(msg)) { if (st) st.textContent = 'ยกเลิกการกู้คืน'; return; }
+    if (st) st.textContent = '⏳ กำลังกู้คืน...';
+    ncrList = b.ncrList;
+    if (b.settings)   settings = b.settings;
+    if (b.bpNames)    BP_NAMES = b.bpNames;
+    if (b.signatures) signatures = b.signatures;
+    await saveData();
+    // กู้คืนคำตอบ Supplier + ประวัติ
+    if (b.supplierReplies) {
+      for (const id of Object.keys(b.supplierReplies)) {
+        try { await dbRef.supplierReply(id).set(b.supplierReplies[id]); } catch(e) { console.warn('restore reply ' + id + ':', e.message); }
+      }
+    }
+    updateDashboard(); renderList(); renderSettings(); populateSelects();
+    if (st) st.textContent = '✅ กู้คืนสำเร็จ: ' + ncrList.length + ' NCR';
+    showAlert('✅ กู้คืนข้อมูลเรียบร้อยแล้ว');
+  } catch(e) {
+    console.error('importBackup:', e);
+    showErrorToast('⚠️ กู้คืนไม่สำเร็จ: ' + e.message);
+    if (st) st.textContent = '❌ กู้คืนไม่สำเร็จ';
+  }
 }
 
 // ==================== VIEW/EDIT/DELETE ====================
@@ -3823,6 +4079,7 @@ document.addEventListener('click', function(e) {
     const urlParams = new URLSearchParams(window.location.search);
     const mode = urlParams.get('mode');
     const ncrId = urlParams.get('id');
+    const replyToken = urlParams.get('token') || null; // Security: รหัสลับประจำใบจากลิงก์/QR
 
     // 3. ฟังก์ชันสร้าง UUID สำหรับ NCR (ถ้าต้องการใช้แทน doc-number เดิม)
     function generateUUID() {
@@ -3857,9 +4114,14 @@ document.addEventListener('click', function(e) {
     };
 
     // 5. ฟังก์ชันแสดง QR Code Modal
-    window.showQRCodeModal = function(id) {
+    window.showQRCodeModal = async function(id) {
         const baseUrl = window.location.origin + window.location.pathname;
-        const replyUrl = `${baseUrl}?mode=reply&id=${id}`;
+        // Security: ดึงรหัสลับประจำใบมาต่อท้ายลิงก์ — Rules ฝั่ง Firebase จะรับเฉพาะการตอบกลับที่มีรหัสตรง
+        let replyUrl = `${baseUrl}?mode=reply&id=${id}`;
+        try {
+            const tokSnap = await dbRef.replyToken(id).once('value');
+            if (tokSnap.exists() && tokSnap.val()) replyUrl += '&token=' + tokSnap.val();
+        } catch(e) { console.warn('อ่าน reply token ไม่ได้ — ใช้ลิงก์แบบไม่มี token:', e.message); }
         
         // ลบ modal เก่าถ้ามี (กรณีซ้อน)
         const oldModal = document.getElementById('qr-modal');
@@ -4205,6 +4467,7 @@ document.addEventListener('click', function(e) {
                         const actionOtherChk = document.getElementById('reply-action-other-chk');
                         // Bug fix (ข้อมูล Supplier ไม่ถึงต้นทาง): await ผลการเขียนจริงจาก Firebase
                         const res = await saveSupplierReplyToPath(ncrId, {
+                          _token: replyToken, // Security: Rules ฝั่ง Firebase ตรวจรหัสนี้ก่อนรับข้อมูล
                           actionReturn:  document.getElementById('reply-action-return').checked,
                           actionSpecial: document.getElementById('reply-action-special').checked,
                           actionRework:  document.getElementById('reply-action-rework').checked,
@@ -4243,7 +4506,7 @@ document.addEventListener('click', function(e) {
                           const errMsg = res && res.error ? res.error : 'ไม่ทราบสาเหตุ';
                           // Bug fix: แจ้ง error จริงให้เห็น — โดยเฉพาะกรณี Firebase Rules ไม่อนุญาตให้เขียน
                           if (String(errMsg).toUpperCase().includes('PERMISSION')) {
-                            showReplyToast('❌ ระบบไม่อนุญาตให้บันทึก (Firebase Rules) — กรุณาแจ้งผู้ออก NCR', '#e53935');
+                            showReplyToast('❌ บันทึกไม่ได้ — ลิงก์อาจไม่ถูกต้องหรือหมดสิทธิ์ กรุณาใช้ลิงก์/QR ล่าสุดจากผู้ออก NCR', '#e53935');
                           } else {
                             showReplyToast('❌ ส่งไม่สำเร็จ: ' + errMsg + ' — กรุณาลองใหม่', '#e53935');
                           }
