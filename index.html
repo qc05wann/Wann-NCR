@@ -1003,7 +1003,7 @@
       </div>
       <div class="form-group">
         <label>ระยะเวลาดำเนินการ</label>
-        <input type="text" id="action-duration" placeholder="เช่น 7 วัน / 2 สัปดาห์">
+        <input type="text" id="action-duration" autocomplete="off" placeholder="เช่น 7 วัน / 2 สัปดาห์">
       </div>
     </div>
   </div>
@@ -2691,11 +2691,11 @@ function viewNCR(idx) {
         </div>
         <div class="form-group">
           <label>ผู้รับผิดชอบดำเนินการ (Supplier)</label>
-          <input type="text" id="modal-supplier-person" placeholder="ชื่อผู้รับผิดชอบ..." value="${n.supplierPerson || ''}">
+          <input type="text" id="modal-supplier-person" autocomplete="off" placeholder="ชื่อผู้รับผิดชอบ..." value="${n.supplierPerson || ''}">
         </div>
         <div class="form-group">
           <label>ตำแหน่ง</label>
-          <input type="text" id="modal-supplier-position" placeholder="ตำแหน่ง..." value="${n.supplierPosition || ''}">
+          <input type="text" id="modal-supplier-position" autocomplete="off" placeholder="ตำแหน่ง..." value="${n.supplierPosition || ''}">
         </div>
         <div class="form-group">
           <label>วันที่จะเริ่มดำเนินการ</label>
@@ -2703,7 +2703,7 @@ function viewNCR(idx) {
         </div>
         <div class="form-group">
           <label>ระยะเวลาดำเนินการ</label>
-          <input type="text" id="modal-action-duration" placeholder="เช่น 7 วัน / 2 สัปดาห์" value="${n.actionDuration || ''}">
+          <input type="text" id="modal-action-duration" autocomplete="off" placeholder="เช่น 7 วัน / 2 สัปดาห์" value="${n.actionDuration || ''}">
         </div>
         <div class="form-group">
           <label>กำหนดตรวจติดตาม</label>
