@@ -3314,7 +3314,7 @@ function buildNCRFormHTML(n) {
   const sigImg = (name, w=200) => {
     const src = signatures[name];
     if (!src) return `<span style="border-bottom:1px solid #333;display:inline-block;width:${w}px;min-height:30px">&nbsp;</span>`;
-    return `<img src="${src}" style="max-width:${w}px;max-height:60px;object-fit:contain;display:block;margin:0 auto;border-bottom:1px solid #333;mix-blend-mode:multiply;filter:contrast(150%) brightness(110%)">`;
+    return `<img src="${src}" style="max-width:${w}px;max-height:38px;object-fit:contain;display:block;margin:0 auto;border-bottom:1px solid #333;mix-blend-mode:multiply;filter:contrast(150%) brightness(110%)">`;
   };
 
 
@@ -3329,7 +3329,7 @@ function buildNCRFormHTML(n) {
 
   const chkBox = (v) => `<span style="display:inline-block;width:14px;height:14px;border:1px solid #333;vertical-align:middle;text-align:center;line-height:13px;font-size:11px">${v?'✓':''}</span>`;
 
-  const SHARED_STYLE = `font-family:'Sarabun','Angsana New',sans-serif;color:#000;background:#fff;padding:28px 32px;width:100%;box-sizing:border-box;font-size:13.5px;line-height:1.6`;
+  const SHARED_STYLE = `font-family:'Sarabun','Angsana New',sans-serif;color:#000;background:#fff;padding:10px 14px;width:100%;box-sizing:border-box;font-size:13px;line-height:1.5`;
 
   const HL = (t) => `<span style="font-weight:700;text-decoration:underline">${t}</span>`;
 
@@ -3388,19 +3388,21 @@ function buildNCRFormHTML(n) {
       </td>
     </tr>
     <tr>
-      <td colspan="2" style="border:1px solid #333;border-top:none;padding:5px 10px;vertical-align:middle">
-        ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด
-        <div style="border-bottom:1px solid #333;min-height:22px;margin-top:3px">${line(n.ncName)}</div>
-      </td>
-      <td style="border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;font-weight:700;vertical-align:middle;text-align:right">รหัสสินค้า</td>
-      <td style="border:1px solid #333;border-top:none;border-left:none;padding:5px 10px;vertical-align:middle">
-        <div style="border-bottom:1px solid #333;min-height:22px;font-family:monospace">${line(n.productCode)}</div>
+      <td colspan="4" style="border:1px solid #333;border-top:none;padding:5px 10px;vertical-align:middle">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-weight:700;white-space:nowrap">ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด</span>
+          <span style="border-bottom:1px solid #333;min-height:22px;flex:1">${line(n.ncName)}</span>
+        </div>
       </td>
     </tr>
     <tr>
       <td colspan="4" style="border:1px solid #333;border-top:none;padding:5px 10px;vertical-align:middle">
-        เลขที่ใบสั่งการผลิต/เอกสารอ้างอิง
-        <div style="border-bottom:1px solid #333;min-height:22px;margin-top:3px">${line(n.refDoc)}</div>
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span style="font-weight:700;white-space:nowrap">เลขที่ใบสั่งการผลิต/เอกสารอ้างอิง</span>
+          <span style="border-bottom:1px solid #333;min-height:22px;flex:1.2">${line(n.refDoc)}</span>
+          <span style="font-weight:700;white-space:nowrap">รหัสสินค้า</span>
+          <span style="border-bottom:1px solid #333;min-height:22px;flex:1;font-family:monospace">${line(n.productCode)}</span>
+        </div>
       </td>
     </tr>
   </table>
@@ -3423,9 +3425,9 @@ function buildNCRFormHTML(n) {
   <!-- ===== ผู้รายงาน / ผู้ทบทวน ===== -->
   <table style="width:100%;border-collapse:collapse">
     <tr>
-      <td style="width:50%;border:1px solid #333;border-top:none;padding:10px 20px 8px;text-align:center">
+      <td style="width:50%;border:1px solid #333;border-top:none;padding:4px 12px 4px;text-align:center">
         <!-- บรรทัดลายเซ็น -->
-        <div style="text-align:center;min-height:60px;display:flex;align-items:flex-end;justify-content:center">
+        <div style="text-align:center;min-height:34px;display:flex;align-items:flex-end;justify-content:center">
           ${sigImg(n.reporter, 180)}
         </div>
         <div style="display:flex;justify-content:center;align-items:flex-end;gap:0;margin-bottom:0;margin-top:2px">
@@ -3433,14 +3435,12 @@ function buildNCRFormHTML(n) {
           <span style="display:inline-block;width:200px;text-align:center;font-weight:700">${line(n.reporter)}</span>
           <span style="white-space:nowrap">)</span>
         </div>
-        <!-- ตำแหน่ง -->
-        <div style="text-align:center;font-size:12px;margin-top:2px">ผู้รายงาน</div>
-        <!-- วันที่ -->
-        <div style="font-size:11px;margin-top:4px;text-align:center;color:#555">ว/ด/ป &nbsp; ${fmtDate(n.date)}</div>
+        <!-- ตำแหน่ง + วันที่ (รวมบรรทัดเดียว) -->
+        <div style="text-align:center;font-size:11px;margin-top:2px">ผู้รายงาน &nbsp;·&nbsp; ว/ด/ป ${fmtDate(n.date)}</div>
       </td>
-      <td style="width:50%;border:1px solid #333;border-top:none;border-left:none;padding:10px 20px 8px;text-align:center">
+      <td style="width:50%;border:1px solid #333;border-top:none;border-left:none;padding:4px 12px 4px;text-align:center">
         <!-- บรรทัดลายเซ็น -->
-        <div style="text-align:center;min-height:60px;display:flex;align-items:flex-end;justify-content:center">
+        <div style="text-align:center;min-height:34px;display:flex;align-items:flex-end;justify-content:center">
           ${sigImg(n.reviewer, 180)}
         </div>
         <div style="display:flex;justify-content:center;align-items:flex-end;gap:0;margin-bottom:0;margin-top:2px">
@@ -3448,10 +3448,8 @@ function buildNCRFormHTML(n) {
           <span style="display:inline-block;width:200px;text-align:center;font-weight:700">${line(n.reviewer)}</span>
           <span style="white-space:nowrap">)</span>
         </div>
-        <!-- ตำแหน่ง -->
-        <div style="text-align:center;font-size:12px;margin-top:2px">ผู้ทบทวน</div>
-        <!-- วันที่ -->
-        <div style="font-size:11px;margin-top:4px;text-align:center;color:#555">ว/ด/ป &nbsp; ${fmtDate(n.date)}</div>
+        <!-- ตำแหน่ง + วันที่ (รวมบรรทัดเดียว) -->
+        <div style="text-align:center;font-size:11px;margin-top:2px">ผู้ทบทวน &nbsp;·&nbsp; ว/ด/ป ${fmtDate(n.date)}</div>
       </td>
     </tr>
   </table>
@@ -3501,31 +3499,31 @@ function buildNCRFormHTML(n) {
         <table style="width:100%;border-collapse:collapse">
           <tr>
             <td style="width:50%;border:none;padding:2px 12px 4px 0;vertical-align:top;font-size:12px">
-              ระยะเวลาดำเนินการ<br>
+              <span style="font-weight:700">ระยะเวลาดำเนินการ</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${line(n.actionDuration)}</span>
             </td>
             <td style="width:50%;border:none;padding:2px 0 4px 0;vertical-align:top;font-size:12px">
-              ผู้รับผิดชอบการดำเนินการ<br>
+              <span style="font-weight:700">ผู้รับผิดชอบการดำเนินการ</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${line(n.supplierPerson)}</span>
             </td>
           </tr>
           <tr>
             <td style="border:none;padding:4px 12px 4px 0;vertical-align:top;font-size:12px">
-              วันที่จะเริ่มดำเนินการ<br>
+              <span style="font-weight:700">วันที่จะเริ่มดำเนินการ</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${fmtDate(n.actionStartDate)}</span>
             </td>
             <td style="border:none;padding:4px 0 4px 0;vertical-align:top;font-size:12px">
-              ตำแหน่ง<br>
+              <span style="font-weight:700">ตำแหน่ง</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${line(n.supplierPosition)}</span>
             </td>
           </tr>
           <tr>
             <td style="border:none;padding:4px 12px 2px 0;vertical-align:top;font-size:12px">
-              กำหนดตรวจติดตาม<br>
+              <span style="font-weight:700">กำหนดตรวจติดตาม</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${fmtDate(n.auditDueDate || n.auditDate)}</span>
             </td>
             <td style="border:none;padding:4px 0 2px 0;vertical-align:top;font-size:12px">
-              วันที่รับทราบให้แก้ไข<br>
+              <span style="font-weight:700">วันที่รับทราบให้แก้ไข</span><br>
               <span style="border-bottom:1px solid #555;display:inline-block;width:85%;min-height:18px;margin-top:2px">${fmtDate(n.fixAcknowledgeDate)}</span>
             </td>
           </tr>
@@ -3560,9 +3558,9 @@ function buildNCRFormHTML(n) {
   <!-- ผู้ตรวจ -->
   <table style="width:100%;border-collapse:collapse">
     <tr>
-      <td style="border:1px solid #333;border-top:none;padding:14px 20px 10px;text-align:center">
+      <td style="border:1px solid #333;border-top:none;padding:4px 12px 4px;text-align:center">
         <!-- ลายเซ็นดิจิตอล ผู้ตรวจ -->
-        <div style="text-align:center;min-height:60px;display:flex;align-items:flex-end;justify-content:center">
+        <div style="text-align:center;min-height:34px;display:flex;align-items:flex-end;justify-content:center">
           ${sigImg(n.auditor, 180)}
         </div>
         <div style="display:flex;justify-content:center;align-items:flex-end;gap:0;margin-bottom:0;margin-top:2px">
@@ -3570,10 +3568,8 @@ function buildNCRFormHTML(n) {
           <span style="display:inline-block;width:220px;text-align:center;font-weight:700">${line(n.auditor)}</span>
           <span style="white-space:nowrap">)</span>
         </div>
-        <!-- ตำแหน่ง -->
-        <div style="text-align:center;font-size:12px;margin-top:2px">ผู้ตรวจ</div>
-        <!-- วันที่ -->
-        <div style="font-size:11px;margin-top:4px;text-align:center;color:#555">ว/ด/ป &nbsp; ${fmtDate(n.auditorSignDate)}</div>
+        <!-- ตำแหน่ง + วันที่ (รวมบรรทัดเดียว) -->
+        <div style="text-align:center;font-size:11px;margin-top:2px">ผู้ตรวจ &nbsp;·&nbsp; ว/ด/ป ${fmtDate(n.auditorSignDate)}</div>
       </td>
     </tr>
   </table>
@@ -3652,7 +3648,8 @@ function buildNCRFormHTML(n) {
   </table>
 </div>` : '';
 
-  return PAGE1 + PAGE2 + PAGE3;
+  // ④⑥ ห่อฟอร์มหลักด้วย wrapper สำหรับย่ออัตโนมัติให้พอดี A4 1 แผ่นตอนพิมพ์ (หน้ารูปภาพอยู่นอก wrapper — แยกหน้าตามเดิม)
+  return '<div id="ncr-fit-wrap">' + PAGE1 + PAGE2 + '</div>' + PAGE3;
 }
 
 
@@ -3667,10 +3664,35 @@ function printNCRForm() {
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
       body { margin: 0; font-family: 'Sarabun', sans-serif; }
+      /* กว้างเท่าพื้นที่พิมพ์จริงของ A4 (210mm - ขอบ 12mm x 2) เพื่อให้การวัดความสูงตรงกับตอนพิมพ์ */
+      #ncr-fit-wrap { width: 186mm; margin: 0 auto; }
       @page { size: A4; margin: 12mm; }
       @media print { body { margin: 0; } .page-break { page-break-before: always; } }
     </style>
-  </head><body>${html}<script>window.onload=()=>setTimeout(()=>{window.print();},600)<\/script><\/body><\/html>`);
+  </head><body>${html}<script>
+    // ⑥ Fit to Page: ย่อทั้งฟอร์มอัตโนมัติให้จบใน A4 1 แผ่นเสมอ ไม่ว่าข้อความจะเยอะแค่ไหน
+    // หลักการ: วัดความสูงจริง -> ถ้าเกินพื้นที่ A4 ให้ zoom ย่อลง และขยายความกว้าง layout ชดเชย
+    // เพื่อให้พิมพ์แล้วเต็มหน้ากระดาษพอดี (ตัวหนังสือ reflow ได้บรรทัดยาวขึ้น = ย่อน้อยกว่าการย่อภาพตรงๆ)
+    window.onload = () => setTimeout(() => {
+      try {
+        const w = document.getElementById('ncr-fit-wrap');
+        if (w) {
+          const PXMM = 96 / 25.4;
+          const availH = 273 * PXMM;  // 297mm - ขอบบนล่าง 12mm x 2
+          const availW = 186 * PXMM;  // 210mm - ขอบซ้ายขวา 12mm x 2
+          let scale = 1;
+          for (let i = 0; i < 6; i++) {
+            w.style.zoom = scale;
+            w.style.width = (availW / scale) + 'px';
+            const h = w.getBoundingClientRect().height;
+            if (h <= availH) break;
+            scale = scale * (availH / h) * 0.99;
+          }
+        }
+      } catch (e) { console.warn('fit-to-page:', e.message); }
+      setTimeout(() => { window.print(); }, 250);
+    }, 600);
+  <\/script><\/body><\/html>`);
   win.document.close();
 }
 
