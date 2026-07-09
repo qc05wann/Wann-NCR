@@ -1156,6 +1156,31 @@
       <div class="tag-list" id="reviewers-list"></div>
     </div>
 
+    <!-- Approver Emails (ข้อ 2: จำกัดสิทธิ์อนุมัติ) -->
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔐 Email ผู้มีสิทธิ์อนุมัติ NCR</div></div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:10px">
+        ถ้าระบุอย่างน้อย 1 email — เฉพาะบัญชีเหล่านี้เท่านั้นที่กดอนุมัติ/ตีกลับได้ · ถ้าปล่อยว่าง = ทุกคนที่ login กดได้ (แบบเดิม)
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <input type="email" id="add-approver-email" placeholder="เช่น qc05.wann@gmail.com">
+        <button class="btn btn-primary btn-sm" onclick="addApproverEmail()">+</button>
+      </div>
+      <div class="tag-list" id="approver-emails-list"></div>
+    </div>
+
+    <!-- Notify Webhook (ข้อ 6: แจ้งเตือนผู้ทบทวน) -->
+    <div class="card">
+      <div class="card-header"><div class="card-title">🔔 Webhook แจ้งเตือน (ไม่บังคับ)</div></div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:10px">
+        วาง URL ของ Discord/Telegram Webhook หรือ Google Apps Script — ระบบจะยิงแจ้งเตือนเมื่อ: มีใบใหม่รออนุมัติ / อนุมัติแล้ว / ถูกตีกลับ
+      </div>
+      <div style="display:flex;gap:8px">
+        <input type="url" id="notify-webhook-url" placeholder="https://discord.com/api/webhooks/... (เว้นว่าง = ปิดแจ้งเตือน)" style="flex:1">
+        <button class="btn btn-primary btn-sm" onclick="saveNotifyWebhook()">💾</button>
+      </div>
+    </div>
+
     <!-- Departments -->
     <div class="card">
       <div class="card-header"><div class="card-title">🏢 แผนก</div></div>
@@ -1359,7 +1384,7 @@ if (firebaseConfig.apiKey.includes('PASTE_YOUR')) {
 }
 
 // ==================== DATA ====================
-let settings = { reporters: [], reviewers: [], depts: [], productCodes: [] };
+let settings = { reporters: [], reviewers: [], depts: [], productCodes: [], approverEmails: [], notifyWebhookUrl: '', lastBackupAt: '' };
 let ncrList = [];
 let editingIndex = -1;
 let uploadedImages = [];
@@ -1389,6 +1414,8 @@ const dbRef = {
   // รหัสลับประจำใบ (Reply Token): อ่านได้เฉพาะคน login — Rules ใช้ตรวจว่าลิงก์ตอบกลับเป็นของจริง
   replyToken: (id) => db.ref('ncr_system/reply_tokens/' + id.replace(/\//g, '_')),
   signatures:    () => db.ref('ncr_system/signatures'),
+  // รายชื่อ email ผู้มีสิทธิ์อนุมัติ (mirror จาก settings.approverEmails) — Firebase Rules ใช้ node นี้ตรวจสิทธิ์
+  approverEmails:() => db.ref('ncr_system/approver_emails'),
   companyLogo:   () => db.ref('ncr_system/company_logo'),
 };
 
@@ -1582,17 +1609,46 @@ async function loadData() {
   }
 }
 
+// ==================== DIRTY TRACKING (บันทึกรายใบ กันข้อมูลทับกัน) ====================
+// เดิม saveData() เขียน NCR "ทั้งก้อน" ทับ Firebase ทุกครั้ง → ถ้า 2 เครื่องบันทึกไล่เลี่ยกัน
+// เครื่องที่กดทีหลังจะเอาข้อมูลเก่าในเครื่องตัวเองทับใบที่อีกคนเพิ่งแก้ทั้งหมด
+// ใหม่: จดว่าใบไหนถูกแก้ (dirty) แล้วเขียนขึ้น Firebase เฉพาะใบนั้น — ใบอื่นไม่ถูกแตะเลย
+const _dirtyNCRs = new Set();
+let _fullNCRWrite = false; // ใช้เฉพาะ Import Excel / กู้คืน Backup ที่ต้องเขียนทั้งก้อนจริงๆ
+function markNCRDirty(id) { if (id) _dirtyNCRs.add(id); }
+
 async function saveData() {
   // บันทึกทุกอย่างขึ้น Firebase
   try {
     await dbRef.settings().set(settings);
 
-    // บันทึก NCR list เป็น object (key = NCR ID)
-    const ncrObj = {};
-    ncrList.forEach(n => {
-      if (n && n.id) ncrObj[n.id.replace(/\//g, '_')] = n;
-    });
-    await dbRef.ncrList().set(ncrObj);
+    if (_fullNCRWrite) {
+      // โหมดเขียนทั้งก้อน (Import/Restore เท่านั้น)
+      const ncrObj = {};
+      ncrList.forEach(n => {
+        if (n && n.id) ncrObj[n.id.replace(/\//g, '_')] = n;
+      });
+      await dbRef.ncrList().set(ncrObj);
+      _fullNCRWrite = false;
+      _dirtyNCRs.clear();
+    } else if (_dirtyNCRs.size > 0) {
+      // โหมดปกติ: เขียนเฉพาะใบที่ถูกแก้ (multi-path update — atomic)
+      const patch = {};
+      _dirtyNCRs.forEach(id => {
+        const n = ncrList.find(x => x && x.id === id);
+        if (n) patch[id.replace(/\//g, '_')] = n;
+      });
+      if (Object.keys(patch).length) await dbRef.ncrList().update(patch);
+      // ข้อ 5: token lifecycle — ใบที่ปิดแล้ว ลิงก์ Supplier ต้องตายทันที
+      for (const id of _dirtyNCRs) {
+        const n = ncrList.find(x => x && x.id === id);
+        if (n && n.status === 'closed') {
+          try { await dbRef.replyToken(id).remove(); } catch(e) { console.warn('ลบ token ใบปิดไม่สำเร็จ:', e.message); }
+        }
+      }
+      _dirtyNCRs.clear();
+    }
+    // ถ้าไม่มีใบ dirty เลย = บันทึกเฉพาะ settings (เช่น เพิ่มรายชื่อ) — ไม่แตะ NCR ใดๆ ทั้งสิ้น
 
     // บันทึก BP Names
     await dbRef.bpNames().set(BP_NAMES);
@@ -1757,6 +1813,7 @@ function importMasterData() {
         importCount++;
       }
 
+      _fullNCRWrite = true; // Import = เจตนาเขียนทั้งก้อน
       await saveData();
       renderSettings(); populateSelects(); renderList(); updateDashboard();
       showAlert('✅ Import Excel สำเร็จ — ' + importCount + ' หมวดข้อมูล → บันทึกขึ้น Firebase แล้ว');
@@ -2240,6 +2297,10 @@ async function saveNCR() {
   const _isNewRecord = editingIndex < 0; // จับสถานะไว้ก่อน editingIndex ถูกรีเซ็ต (ใช้ตัดสินใจสร้าง token)
   if (editingIndex >= 0) {
     // Preserve supplier reply fields that are managed separately
+    // Hardening ข้อ 1: real-time listener อาจทำให้ลำดับในลิสต์ขยับระหว่างที่กำลังแก้อยู่
+    // จึงหา index ปัจจุบันจาก id จริงอีกครั้ง กันบันทึกทับผิดใบ
+    const _curIdx = ncrList.findIndex(x => x && x.id === ncr.id);
+    if (_curIdx >= 0) editingIndex = _curIdx;
     const existing = ncrList[editingIndex];
     if (existing.supplierReply)     ncr.supplierReply     = existing.supplierReply;
     if (existing.supplierCA)        ncr.supplierCA        = existing.supplierCA;
@@ -2250,7 +2311,29 @@ async function saveNCR() {
     if (existing.approvedAt)        ncr.approvedAt        = existing.approvedAt;
     if (Array.isArray(existing.approvalHistory)) ncr.approvalHistory = existing.approvalHistory;
     if (Array.isArray(existing.returnHistory))   ncr.returnHistory   = existing.returnHistory;
+    if (existing.backfilled) { ncr.backfilled = true; ncr.backfilledBy = existing.backfilledBy || ''; ncr.backfilledAt = existing.backfilledAt || ''; }
     // ตั้งใจ "ไม่" copy approvalReturned/approvalReturnReason — การแก้ไขแล้วบันทึก = ส่งกลับให้ผู้ทบทวนพิจารณาใหม่
+
+    // ข้อ 3 (ISO 9001:8.7): ใบที่อนุมัติแล้ว ถ้า "เนื้อหาสาระ" ถูกแก้ → การอนุมัติเดิมใช้ไม่ได้
+    // ต้องกลับเข้าคิวรออนุมัติใหม่ (ผู้ทบทวนอนุมัติเนื้อหาเวอร์ชันเก่า ไม่ใช่เวอร์ชันที่เพิ่งแก้)
+    if (existing.approvedAt) {
+      const KEY_FIELDS = ['ncType','bp','dept','subject','ncName','productCode','refDoc','defectDetail'];
+      const changed = KEY_FIELDS.filter(f => (existing[f] || '') !== (ncr[f] || ''));
+      if (changed.length) {
+        if (!confirm('⚠️ ใบนี้ผ่านการอนุมัติแล้ว และเนื้อหาสาระถูกแก้ไข (' + changed.length + ' รายการ)\n\n'
+          + 'การบันทึกจะ "ยกเลิกการอนุมัติเดิม" และใบจะกลับเป็นสถานะ 🟣 รออนุมัติ\n'
+          + 'ผู้ทบทวนต้องอนุมัติใหม่ก่อนใช้งานต่อ (ลิงก์ Supplier เดิมยังใช้ได้หลังอนุมัติซ้ำ)\n\nยืนยันบันทึก?')) return;
+        if (!Array.isArray(ncr.approvalHistory)) ncr.approvalHistory = [];
+        ncr.approvalHistory.push({
+          _event: 'approval-reset-by-edit',
+          _at: new Date().toISOString(),
+          by: (typeof auth !== 'undefined' && auth && auth.currentUser) ? (auth.currentUser.email || '') : '',
+          changedFields: changed
+        });
+        delete ncr.approvedBy; delete ncr.approvedByEmail; delete ncr.approvedAt;
+        ncr.status = 'pending-approval';
+      }
+    }
     ncrList[editingIndex] = ncr;
     editingIndex = -1;
   } else {
@@ -2273,6 +2356,7 @@ async function saveNCR() {
   showPage('ncr-list');
   // Bug fix (QR ชี้เลขผิด): จดเลขที่เอกสาร "จริง" ที่บันทึก — เผื่อกรณีเลขซ้ำแล้วระบบออกเลขใหม่ให้อัตโนมัติ
   window._lastSavedNcrId = ncr.id;
+  markNCRDirty(ncr.id); // ข้อ 1: บันทึกเฉพาะใบนี้
   // Security: สร้างรหัสลับประจำใบ (32 ตัวอักษรสุ่ม) เฉพาะ "ใบใหม่" เท่านั้น
   // (ห้ามสร้างซ้ำตอนแก้ไข — ไม่งั้น QR ที่แจก Supplier ไปแล้วจะใช้ไม่ได้)
   // Approval Gate: ใบที่รออนุมัติ "ยังไม่สร้าง token" — token จะถูกสร้างตอนผู้ทบทวนกดอนุมัติ
@@ -2446,7 +2530,17 @@ function updateOverdueBanner() {
   // 3) Approval Gate: ใบที่ค้างรอผู้ทบทวนอนุมัติ — แสดงให้ผู้ทบทวนเห็นทันทีบน Dashboard
   const pendingApprove = ncrList.filter(n => n && n.status === 'pending-approval');
 
-  if (!overdueAudit.length && !silent.length && !pendingApprove.length) { banner.style.display = 'none'; return; }
+  // 4) เตือนสำรองข้อมูล: ไม่เคยสำรอง หรือสำรองล่าสุดเกิน 7 วัน
+  let backupWarn = '';
+  const lastBk = settings.lastBackupAt ? new Date(settings.lastBackupAt) : null;
+  const bkDays = lastBk ? Math.floor((Date.now() - lastBk.getTime()) / 86400000) : null;
+  if (ncrList.length > 0 && (bkDays === null || bkDays >= 7)) {
+    backupWarn = '<div style="padding:6px 10px;border-radius:8px;background:rgba(233,30,99,.08);margin-top:6px;cursor:pointer;font-size:.85rem" onclick="showPage(\'settings\')">💾 '
+      + (bkDays === null ? 'ยังไม่เคยสำรองข้อมูล' : 'สำรองข้อมูลล่าสุดเมื่อ ' + bkDays + ' วันก่อน')
+      + ' — แตะเพื่อไปหน้าตั้งค่า > ดาวน์โหลดไฟล์สำรอง (JSON)</div>';
+  }
+
+  if (!overdueAudit.length && !silent.length && !pendingApprove.length && !backupWarn) { banner.style.display = 'none'; return; }
   const item = (n, extra) => `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.85rem">
       <span class="ncr-id">${escapeHTML(n.id)}</span><span style="color:var(--text-muted)">${escapeHTML(n.bp || '')}</span>
       <span>${extra}</span>
@@ -2456,7 +2550,8 @@ function updateOverdueBanner() {
     '<div style="font-weight:700;color:#e53935;font-size:.95rem">⏰ รายการที่ต้องตามงาน (' + (overdueAudit.length + silent.length + pendingApprove.length) + ')</div>'
     + pendingApprove.map(n => item(n, '🟣 รอผู้ทบทวนอนุมัติ' + (n.approvalReturned ? ' (ถูกส่งกลับให้แก้ไข)' : ''))).join('')
     + overdueAudit.map(n => item(n, '🔴 เลยกำหนดตรวจติดตาม ' + daysBetween(parseAnyDate(n.auditDueDate), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('')
-    + silent.map(n => item(n, '🟠 Supplier ยังไม่ตอบกลับ ' + daysBetween(parseAnyDate(n.returnedAt) || parseAnyDate(n.date), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('');
+    + silent.map(n => item(n, '🟠 Supplier ยังไม่ตอบกลับ ' + daysBetween(parseAnyDate(n.returnedAt) || parseAnyDate(n.date), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('')
+    + backupWarn;
   banner.style.display = 'block';
 }
 
@@ -2534,6 +2629,8 @@ function exportScorecardCSV() {
 
 // ==================== สำรอง / กู้คืนข้อมูล (BACKUP) ====================
 async function exportBackup() {
+  settings.lastBackupAt = new Date().toISOString(); // ข้อ 4: จดเวลาสำรองล่าสุด (ใช้เตือนบน Dashboard)
+  saveData().catch(()=>{});
   const st = document.getElementById('backup-status');
   if (st) st.textContent = '⏳ กำลังรวบรวมข้อมูล...';
   // รวบรวมคำตอบ Supplier + ประวัติ ของทุกใบ (อ่านรายใบตามสิทธิ์ Rules)
@@ -2579,6 +2676,7 @@ async function importBackup(file) {
     if (b.settings)   settings = b.settings;
     if (b.bpNames)    BP_NAMES = b.bpNames;
     if (b.signatures) signatures = b.signatures;
+    _fullNCRWrite = true; // Restore = เจตนาเขียนทั้งก้อน
     await saveData();
     // กู้คืนคำตอบ Supplier + ประวัติ
     if (b.supplierReplies) {
@@ -2909,12 +3007,69 @@ async function saveStep2(idx) {
   n.supplierPreventive= document.getElementById('modal-supplier-preventive').value;
   n.updatedAt = new Date().toISOString();
   if (n.status === 'open' || n.status === 'waiting-reply') n.status = 'waiting-audit';
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step2-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
 }
 
 // ==================== APPROVAL GATE (ผู้ทบทวนอนุมัติก่อนส่ง SUPPLIER) ====================
+
+// ---------- ข้อ 2: Whitelist ผู้มีสิทธิ์อนุมัติ ----------
+function canApprove() {
+  const list = settings.approverEmails || [];
+  if (!list.length) return true; // ไม่ตั้ง whitelist = ทุกคนที่ login (พฤติกรรมเดิม)
+  const email = (typeof auth !== 'undefined' && auth && auth.currentUser) ? (auth.currentUser.email || '').toLowerCase() : '';
+  return list.some(e => e.toLowerCase() === email);
+}
+
+async function addApproverEmail() {
+  const el = document.getElementById('add-approver-email');
+  const val = (el.value || '').trim().toLowerCase();
+  if (!val || !val.includes('@')) { showErrorToast('⚠️ กรุณาใส่ email ให้ถูกต้อง'); return; }
+  if (!Array.isArray(settings.approverEmails)) settings.approverEmails = [];
+  if (!settings.approverEmails.includes(val)) {
+    settings.approverEmails.push(val);
+    await saveData();
+    await syncApproverEmailsNode();
+    el.value = ''; renderSettings(); showSaveAlert();
+  }
+}
+
+async function removeApproverEmail(i) {
+  settings.approverEmails.splice(i, 1);
+  await saveData();
+  await syncApproverEmailsNode();
+  renderSettings(); showSaveAlert();
+}
+
+// Mirror whitelist ขึ้น node แยก (key = email แทน . ด้วย ,) ให้ Firebase Rules ตรวจสิทธิ์ฝั่ง server ได้
+async function syncApproverEmailsNode() {
+  try {
+    const obj = {};
+    (settings.approverEmails || []).forEach(e => { obj[e.toLowerCase().replace(/\./g, ',')] = true; });
+    await dbRef.approverEmails().set(obj);
+  } catch(e) { console.warn('sync approver_emails:', e.message); }
+}
+
+// ---------- ข้อ 6: แจ้งเตือนผ่าน Webhook (Discord / Telegram / Google Apps Script) ----------
+async function saveNotifyWebhook() {
+  const el = document.getElementById('notify-webhook-url');
+  settings.notifyWebhookUrl = (el.value || '').trim();
+  await saveData(); showSaveAlert();
+}
+
+function sendNotify(text) {
+  // fire-and-forget: ไม่บล็อกงานหลัก ไม่พังถ้า webhook ล่ม
+  const url = (settings.notifyWebhookUrl || '').trim();
+  if (!url) return;
+  try {
+    const appUrl = window.location.origin + window.location.pathname;
+    const payload = JSON.stringify({ content: text, text: text, message: text, app: 'WannNCR', link: appUrl });
+    fetch(url, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: payload })
+      .catch(e => console.warn('notify:', e.message));
+  } catch(e) { console.warn('notify:', e.message); }
+}
+
 // การ์ดแสดงในขั้นตอนที่ 1: ก่อนอนุมัติ = ฟอร์มอนุมัติ / หลังอนุมัติ = ป้ายเขียว + ปุ่ม QR
 // ใบเก่าที่สร้างก่อนมีฟีเจอร์นี้ (ไม่ใช่ pending-approval และไม่มี approvedAt) จะไม่แสดงการ์ด — ไม่กระทบของเดิม
 function approvalCardHTML(n, idx) {
@@ -2951,8 +3106,10 @@ function approvalCardHTML(n, idx) {
           <option value="">-- เลือกชื่อผู้ทบทวน --</option>${reviewerOpts}
         </select>
       </div>
+      ${canApprove() ? `
       <button class="btn btn-primary btn-sm" onclick="approveNCRDoc(${idx})">✅ อนุมัติ + สร้างลิงก์ Supplier</button>
-      <button class="btn btn-secondary btn-sm" onclick="returnNCRForRevision(${idx})">↩️ ส่งกลับให้แก้ไข</button>
+      <button class="btn btn-secondary btn-sm" onclick="returnNCRForRevision(${idx})">↩️ ส่งกลับให้แก้ไข</button>` : `
+      <div style="font-size:.82rem;color:#92400e;background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;padding:8px 12px">🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ — รอผู้ทบทวนที่ได้รับสิทธิ์ (ตั้งค่าได้ที่หน้า ตั้งค่า)</div>`}
     </div>
   </div>`;
 }
@@ -2960,6 +3117,7 @@ function approvalCardHTML(n, idx) {
 async function approveNCRDoc(idx) {
   const n = ncrList[idx];
   if (!n) return;
+  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ NCR — ตรวจสอบรายชื่อได้ที่ ตั้งค่า > Email ผู้มีสิทธิ์อนุมัติ'); return; }
   const sel = document.getElementById('approve-reviewer-select');
   const reviewerName = sel ? sel.value.trim() : '';
   if (!reviewerName) { showErrorToast('⚠️ กรุณาเลือกชื่อผู้ทบทวนก่อนอนุมัติ'); if (sel) sel.focus(); return; }
@@ -2981,10 +3139,12 @@ async function approveNCRDoc(idx) {
     const tokSnap = await dbRef.replyToken(n.id).once('value');
     if (!tokSnap.exists() || !tokSnap.val()) {
       await dbRef.replyToken(n.id).set(generateReplyToken());
+      n.replyTokenCreatedAt = now; // ข้อ 5: ใช้ตรวจอายุลิงก์ (90 วัน)
     }
   } catch(e) { console.warn('สร้าง reply token ตอนอนุมัติไม่สำเร็จ:', e.message); }
 
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
+  sendNotify('✅ [WannNCR] อนุมัติแล้ว: ' + n.id + ' โดย ' + reviewerName + ' — พร้อมส่งลิงก์ให้ Supplier');
   showAlert('✅ อนุมัติแล้ว: ' + n.id + ' — พร้อมส่งลิงก์ให้ Supplier');
   closeModal('view-modal');
   showQRCodeModal(n.id); // เด้ง QR ให้เลย ผู้ทบทวน/QC copy ส่ง Supplier ได้ทันที
@@ -2993,6 +3153,7 @@ async function approveNCRDoc(idx) {
 async function returnNCRForRevision(idx) {
   const n = ncrList[idx];
   if (!n) return;
+  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์ตีกลับใบรออนุมัติ — ตรวจสอบรายชื่อได้ที่ ตั้งค่า > Email ผู้มีสิทธิ์อนุมัติ'); return; }
   const sel = document.getElementById('approve-reviewer-select');
   const reviewerName = sel ? sel.value.trim() : '';
   const reason = prompt('เหตุผลที่ส่งกลับให้ผู้ออก NCR แก้ไข:\n(จะแสดงให้ผู้ออกเห็นในขั้นตอนที่ 1)');
@@ -3008,7 +3169,8 @@ async function returnNCRForRevision(idx) {
   if (!Array.isArray(n.approvalHistory)) n.approvalHistory = [];
   n.approvalHistory.push({ _event: 'returned-for-revision', _at: now, by: n.approvalReturnedBy, reason: reason.trim() });
 
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
+  sendNotify('↩️ [WannNCR] ' + n.id + ' ถูกส่งกลับให้แก้ไข — เหตุผล: ' + reason.trim());
   showAlert('↩️ ส่งกลับให้ผู้ออก NCR แก้ไขแล้ว: ' + n.id);
   viewNCR(idx); // รีเฟรชให้เห็นกล่องเหตุผลทันที
 }
@@ -3036,7 +3198,7 @@ async function returnToSupplier(idx) {
   // Audit Trail: จดเหตุการณ์ส่งกลับสะสมไว้ (ไม่ทับของเก่า — ตีกลับกี่รอบก็ตามดูได้หมด)
   if (!Array.isArray(n.returnHistory)) n.returnHistory = [];
   n.returnHistory.push({ _event: 'returned', _at: n.returnedAt, reason: reason });
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
   showAlert('↩️ ส่งกลับให้ Supplier แก้ไขแล้ว: ' + n.id);
   viewNCR(idx); // รีเฟรช modal ให้เห็นป้ายสถานะส่งกลับ
 }
@@ -3123,7 +3285,7 @@ async function saveStep3(idx) {
   n.auditor         = document.getElementById('modal-auditor').value;
   n.auditorSignDate = document.getElementById('modal-auditor-sign-date').value;
   n.updatedAt = new Date().toISOString();
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step3-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
 }
@@ -3141,7 +3303,7 @@ async function saveStep4(idx) {
   if (n.closureResult === 'accept') n.status = 'closed';
   else if (n.closureResult === 'reject') n.status = 'waiting-reply';
   n.updatedAt = new Date().toISOString();
-  await saveData(); updateDashboard(); renderList();
+  markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
   const ok2 = document.getElementById('step4-save-ok');
   if (ok2) { ok2.style.display='inline'; setTimeout(()=>ok2.style.display='none',2500); }
   // Re-render modal title with updated status badge
@@ -3163,6 +3325,7 @@ async function saveSupplierReply(idx) {
   if (ncrList[idx].status === 'waiting-reply' && (replyText || replyCA)) {
     ncrList[idx].status = 'waiting-audit';
   }
+  markNCRDirty(ncrList[idx].id);
   await saveData();
   updateDashboard();
   renderList();
@@ -3173,6 +3336,8 @@ async function saveSupplierReply(idx) {
 
 async function quickStatus(idx, status) {
   ncrList[idx].status = status;
+  ncrList[idx].updatedAt = new Date().toISOString();
+  markNCRDirty(ncrList[idx].id);
   await saveData();
   updateDashboard();
   renderList();
@@ -3236,7 +3401,12 @@ function editNCR(idx) {
 
 async function deleteNCR(idx) {
   if (!confirm(`ลบ NCR: ${ncrList[idx].id} ?`)) return;
+  const delId = ncrList[idx].id;
   ncrList.splice(idx, 1);
+  try {
+    await dbRef.ncrItem(delId).remove();                    // ลบใบนี้ใบเดียวบน Firebase
+    await dbRef.replyToken(delId).remove().catch(()=>{});   // ลบลิงก์ Supplier ที่ค้าง (Security)
+  } catch(e) { alert('ลบไม่สำเร็จ: ' + e.message); }
   await saveData();
   renderList();
   updateDashboard();
@@ -3783,6 +3953,13 @@ function renderSettings() {
   // Reviewers
   document.getElementById('reviewers-list').innerHTML = settings.reviewers.map((r,i) =>
     `<div class="tag">${r}<span class="del-tag" onclick="removePerson('reviewers',${i})">✕</span></div>`).join('');
+  // Approver Emails (ข้อ 2)
+  const apEl = document.getElementById('approver-emails-list');
+  if (apEl) apEl.innerHTML = (settings.approverEmails || []).map((e,i) =>
+    `<div class="tag">${escapeHTML(e)}<span class="del-tag" onclick="removeApproverEmail(${i})">✕</span></div>`).join('') || '<span style="font-size:.8rem;color:var(--text-muted)">ยังไม่จำกัดสิทธิ์ — ทุกคนที่ login อนุมัติได้</span>';
+  // Notify Webhook (ข้อ 6)
+  const whEl = document.getElementById('notify-webhook-url');
+  if (whEl && document.activeElement !== whEl) whEl.value = settings.notifyWebhookUrl || '';
   // Depts
   document.getElementById('depts-list').innerHTML = settings.depts.map((d,i) =>
     `<div class="tag">${d}<span class="del-tag" onclick="removeDept(${i})">✕</span></div>`).join('');
@@ -4264,6 +4441,7 @@ document.addEventListener('click', function(e) {
             const savedNcr = ncrList.find(x => x.id === savedId);
             // Approval Gate: ใบใหม่ที่รออนุมัติ — ยังไม่มี token จึงไม่เด้ง QR แต่บอกขั้นตอนถัดไปแทน
             if (savedNcr && savedNcr.status === 'pending-approval') {
+                sendNotify('🟣 [WannNCR] มีใบใหม่รออนุมัติ: ' + savedId + ' — ' + (savedNcr.subject || '') + ' (' + (savedNcr.bp || savedNcr.dept || '') + ')');
                 showApprovalPendingNotice(savedId);
             } else {
                 showQRCodeModal(savedId);
@@ -4432,6 +4610,24 @@ document.addEventListener('click', function(e) {
                     _fp2.appendChild(_sm2);
                 }
                 return;
+            }
+            // ข้อ 5: ลิงก์ตอบกลับมีอายุ 90 วันนับจากวันอนุมัติ — เกินแล้วปิดรับ (ใบที่เข้าสถานะถัดไปแล้วมีหน้าแจ้งของตัวเองอยู่แล้ว)
+            if (ncr && (ncr.status === 'waiting-reply' || ncr.status === 'open') && ncr.replyTokenCreatedAt) {
+                const _ageDays = (Date.now() - new Date(ncr.replyTokenCreatedAt).getTime()) / 86400000;
+                if (isFinite(_ageDays) && _ageDays > 90) {
+                    const _fp3 = document.getElementById('page-new-ncr');
+                    if (typeof showPage === 'function') showPage('new-ncr');
+                    if (_fp3 && !document.getElementById('reply-status-msg')) {
+                        const _sm3 = document.createElement('div');
+                        _sm3.id = 'reply-status-msg';
+                        _sm3.style.cssText = 'text-align:center;padding:48px 24px;font-family:Sarabun,sans-serif';
+                        _sm3.innerHTML = '<div style="font-size:2.5rem;margin-bottom:14px">⌛</div>'
+                            + '<div style="color:#e53935;font-size:1.05rem;font-weight:600">ลิงก์ตอบกลับนี้หมดอายุแล้ว (เกิน 90 วัน)</div>'
+                            + '<div style="color:var(--text-muted);font-size:.9rem;margin-top:10px">กรุณาติดต่อผู้ออก NCR เพื่อขอลิงก์ใหม่</div>';
+                        _fp3.appendChild(_sm3);
+                    }
+                    return;
+                }
             }
             if (ncr) {
                 // แสดงหน้าฟอร์ม
