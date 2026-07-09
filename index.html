@@ -274,6 +274,7 @@
   .badge-waiting-reply { background: rgba(212,160,23,.1); color: #d4b850; border: 1px solid rgba(212,160,23,.4); border-left: 3px solid #d4a017; }
   .badge-waiting-audit { background: rgba(77,157,224,.1); color: #6ab0e0; border: 1px solid rgba(77,157,224,.4); border-left: 3px solid #4d9de0; }
   .badge-closed { background: rgba(61,186,111,.1); color: #5dd490; border: 1px solid rgba(61,186,111,.4); border-left: 3px solid #3dba6f; }
+  .badge-pending-approval { background: rgba(155,89,182,.1); color: #b57edc; border: 1px solid rgba(155,89,182,.4); border-left: 3px solid #9b59b6; }
 
   .dot { width: 6px; height: 6px; border-radius: 0; background: currentColor; display: inline-block; transform: rotate(45deg); }
 
@@ -1003,7 +1004,7 @@
       </div>
       <div class="form-group">
         <label>ระยะเวลาดำเนินการ</label>
-        <input type="text" id="action-duration" autocomplete="off" placeholder="เช่น 7 วัน / 2 สัปดาห์">
+        <input type="text" id="action-duration" placeholder="เช่น 7 วัน / 2 สัปดาห์">
       </div>
     </div>
   </div>
@@ -1034,6 +1035,7 @@
       <div class="form-group">
         <label>สถานะ</label>
         <select id="ncr-status">
+          <option value="pending-approval">🟣 รออนุมัติ (ผู้ทบทวน)</option>
           <option value="waiting-reply">🟡 รอตอบกลับ</option>
           <option value="waiting-audit">🔵 รอตรวจติดตาม</option>
           <option value="closed">🟢 ปิดแล้ว</option>
@@ -1076,6 +1078,7 @@
     <input type="text" id="search-input" placeholder="🔍 ค้นหา..." oninput="renderList()">
     <select id="filter-status" onchange="renderList()">
       <option value="">ทุกสถานะ</option>
+      <option value="pending-approval">รออนุมัติ</option>
       <option value="waiting-reply">รอตอบกลับ</option>
       <option value="waiting-audit">รอตรวจติดตาม</option>
       <option value="closed">ปิดแล้ว</option>
@@ -2241,6 +2244,13 @@ async function saveNCR() {
     if (existing.supplierReply)     ncr.supplierReply     = existing.supplierReply;
     if (existing.supplierCA)        ncr.supplierCA        = existing.supplierCA;
     if (existing.supplierReplyDate) ncr.supplierReplyDate = existing.supplierReplyDate;
+    // Approval Gate: รักษาข้อมูลการอนุมัติเดิมไว้ (ฟิลด์เหล่านี้ไม่มีในฟอร์ม จะหายถ้าไม่ copy)
+    if (existing.approvedBy)        ncr.approvedBy        = existing.approvedBy;
+    if (existing.approvedByEmail)   ncr.approvedByEmail   = existing.approvedByEmail;
+    if (existing.approvedAt)        ncr.approvedAt        = existing.approvedAt;
+    if (Array.isArray(existing.approvalHistory)) ncr.approvalHistory = existing.approvalHistory;
+    if (Array.isArray(existing.returnHistory))   ncr.returnHistory   = existing.returnHistory;
+    // ตั้งใจ "ไม่" copy approvalReturned/approvalReturnReason — การแก้ไขแล้วบันทึก = ส่งกลับให้ผู้ทบทวนพิจารณาใหม่
     ncrList[editingIndex] = ncr;
     editingIndex = -1;
   } else {
@@ -2249,6 +2259,9 @@ async function saveNCR() {
       generateDocNumber();
       ncr.id = document.getElementById('doc-number').value;
     }
+    // Approval Gate: ใบใหม่ที่สถานะ "รอตอบกลับ/เปิดใหม่" ต้องผ่านผู้ทบทวนอนุมัติก่อนเสมอ
+    // (ยกเว้นกรอกย้อนหลังเป็น waiting-audit/closed — ถือเป็นการบันทึกประวัติ ไม่ต้องเข้า gate)
+    if (ncr.status === 'waiting-reply' || ncr.status === 'open') ncr.status = 'pending-approval';
     ncrList.push(ncr);
   }
 
@@ -2262,7 +2275,9 @@ async function saveNCR() {
   window._lastSavedNcrId = ncr.id;
   // Security: สร้างรหัสลับประจำใบ (32 ตัวอักษรสุ่ม) เฉพาะ "ใบใหม่" เท่านั้น
   // (ห้ามสร้างซ้ำตอนแก้ไข — ไม่งั้น QR ที่แจก Supplier ไปแล้วจะใช้ไม่ได้)
-  if (_isNewRecord) {
+  // Approval Gate: ใบที่รออนุมัติ "ยังไม่สร้าง token" — token จะถูกสร้างตอนผู้ทบทวนกดอนุมัติ
+  // (ไม่มี token = Firebase Rules ปฏิเสธการตอบกลับ → Supplier ตอบก่อนอนุมัติไม่ได้จริงในระดับ database)
+  if (_isNewRecord && ncr.status !== 'pending-approval') {
     try {
       const tok = generateReplyToken();
       await dbRef.replyToken(ncr.id).set(tok);
@@ -2293,7 +2308,7 @@ function clearForm() {
   if (typeof filterSubjectByNcType === 'function') filterSubjectByNcType();
   const subjEl = document.getElementById('subject'); if (subjEl) subjEl.value = '';
   const deptEl = document.getElementById('dept-select'); if (deptEl) deptEl.value = '';
-  const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'waiting-reply';
+  const statusEl = document.getElementById('ncr-status'); if (statusEl) statusEl.value = 'pending-approval';
   ['action-return','action-special','action-rework','action-destroy','action-other'].forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
   const otEl = document.getElementById('action-other-text'); if (otEl) otEl.style.display = 'none';
   renderImageGrid();
@@ -2357,6 +2372,7 @@ function renderList() {
 function statusBadge(status) {
   const map = {
     'open': '<span class="badge badge-open"><span class="dot"></span>เปิดใหม่</span>',
+    'pending-approval': '<span class="badge badge-pending-approval"><span class="dot"></span>รออนุมัติ</span>',
     'waiting-reply': '<span class="badge badge-waiting-reply"><span class="dot"></span>รอตอบกลับ</span>',
     'waiting-audit': '<span class="badge badge-waiting-audit"><span class="dot"></span>รอตรวจติดตาม</span>',
     'closed': '<span class="badge badge-closed"><span class="dot"></span>ปิดแล้ว</span>',
@@ -2427,14 +2443,18 @@ function updateOverdueBanner() {
     return base && daysBetween(base, today) > 7;
   });
 
-  if (!overdueAudit.length && !silent.length) { banner.style.display = 'none'; return; }
+  // 3) Approval Gate: ใบที่ค้างรอผู้ทบทวนอนุมัติ — แสดงให้ผู้ทบทวนเห็นทันทีบน Dashboard
+  const pendingApprove = ncrList.filter(n => n && n.status === 'pending-approval');
+
+  if (!overdueAudit.length && !silent.length && !pendingApprove.length) { banner.style.display = 'none'; return; }
   const item = (n, extra) => `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.85rem">
       <span class="ncr-id">${escapeHTML(n.id)}</span><span style="color:var(--text-muted)">${escapeHTML(n.bp || '')}</span>
       <span>${extra}</span>
       <button class="btn btn-info btn-xs" style="margin-left:auto" onclick="viewNCR(${ncrList.indexOf(n)})">ดู</button>
     </div>`;
   banner.innerHTML =
-    '<div style="font-weight:700;color:#e53935;font-size:.95rem">⏰ รายการที่ต้องตามงาน (' + (overdueAudit.length + silent.length) + ')</div>'
+    '<div style="font-weight:700;color:#e53935;font-size:.95rem">⏰ รายการที่ต้องตามงาน (' + (overdueAudit.length + silent.length + pendingApprove.length) + ')</div>'
+    + pendingApprove.map(n => item(n, '🟣 รอผู้ทบทวนอนุมัติ' + (n.approvalReturned ? ' (ถูกส่งกลับให้แก้ไข)' : ''))).join('')
     + overdueAudit.map(n => item(n, '🔴 เลยกำหนดตรวจติดตาม ' + daysBetween(parseAnyDate(n.auditDueDate), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('')
     + silent.map(n => item(n, '🟠 Supplier ยังไม่ตอบกลับ ' + daysBetween(parseAnyDate(n.returnedAt) || parseAnyDate(n.date), new Date(new Date().setHours(0,0,0,0))) + ' วัน')).join('');
   banner.style.display = 'block';
@@ -2672,6 +2692,7 @@ function viewNCR(idx) {
       ${n.images && n.images.length ? `
         <div style="margin-top:8px"><label style="font-size:.75rem;color:var(--text-muted);font-weight:600">รูปภาพประกอบ (${n.images.length} รูป)</label>
         <div class="img-grid" style="margin-top:6px">${n.images.map((img,i)=>`<div class="img-thumb" style="cursor:pointer" onclick="openViewImgLB(${i},this.closest('.img-grid'))" title="คลิกเพื่อดูขนาดใหญ่"><img src="${img.dataUrl}" alt="${img.name}" style="width:100%;height:100%;object-fit:cover;pointer-events:none"></div>`).join('')}</div></div>` : ''}
+      ${approvalCardHTML(n, idx)}
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
         <button class="btn btn-secondary btn-sm" onclick="editNCR(${idx});closeModal('view-modal')">✏️ แก้ไข NCR</button>
         <button class="btn btn-primary btn-sm" onclick="openPrint(${idx})">🖨 พิมพ์ฟอร์ม</button>
@@ -2684,6 +2705,10 @@ function viewNCR(idx) {
       <div style="font-weight:700;font-size:1rem;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #f59e0b;color:#b45309">
         📨 ขั้นตอนที่ 2: Supplier ตอบกลับ
       </div>
+      ${n.status === 'pending-approval' ? `
+      <div style="background:#f3e8ff;border:2px solid #9b59b6;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#6b21a8">
+        <b>🔒 ยังส่งลิงก์ให้ Supplier ไม่ได้</b> — ใบนี้รอผู้ทบทวนอนุมัติในขั้นตอนที่ 1 ก่อน ระบบจึงจะสร้างลิงก์/QR ตอบกลับให้
+      </div>` : ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div class="form-group">
           <label>วันที่ Supplier ตอบกลับ</label>
@@ -2691,11 +2716,11 @@ function viewNCR(idx) {
         </div>
         <div class="form-group">
           <label>ผู้รับผิดชอบดำเนินการ (Supplier)</label>
-          <input type="text" id="modal-supplier-person" autocomplete="off" placeholder="ชื่อผู้รับผิดชอบ..." value="${n.supplierPerson || ''}">
+          <input type="text" id="modal-supplier-person" placeholder="ชื่อผู้รับผิดชอบ..." value="${n.supplierPerson || ''}">
         </div>
         <div class="form-group">
           <label>ตำแหน่ง</label>
-          <input type="text" id="modal-supplier-position" autocomplete="off" placeholder="ตำแหน่ง..." value="${n.supplierPosition || ''}">
+          <input type="text" id="modal-supplier-position" placeholder="ตำแหน่ง..." value="${n.supplierPosition || ''}">
         </div>
         <div class="form-group">
           <label>วันที่จะเริ่มดำเนินการ</label>
@@ -2703,7 +2728,7 @@ function viewNCR(idx) {
         </div>
         <div class="form-group">
           <label>ระยะเวลาดำเนินการ</label>
-          <input type="text" id="modal-action-duration" autocomplete="off" placeholder="เช่น 7 วัน / 2 สัปดาห์" value="${n.actionDuration || ''}">
+          <input type="text" id="modal-action-duration" placeholder="เช่น 7 วัน / 2 สัปดาห์" value="${n.actionDuration || ''}">
         </div>
         <div class="form-group">
           <label>กำหนดตรวจติดตาม</label>
@@ -2857,6 +2882,11 @@ function switchStep(num) {
 
 async function saveStep2(idx) {
   const n = ncrList[idx];
+  // Approval Gate: ห้ามบันทึกข้อมูลตอบกลับก่อนผู้ทบทวนอนุมัติ (กันข้ามขั้นตอน)
+  if (n && n.status === 'pending-approval') {
+    showErrorToast('🔒 ใบนี้ยังไม่ผ่านการอนุมัติจากผู้ทบทวน — กลับไปขั้นตอนที่ 1 เพื่ออนุมัติก่อน');
+    return;
+  }
   const replyDate = document.getElementById('modal-supplier-date').value;
   const replyText = document.getElementById('modal-supplier-reply').value;
   if (!replyDate) { alert('กรุณาระบุวันที่ตอบกลับ'); return; }
@@ -2882,6 +2912,105 @@ async function saveStep2(idx) {
   await saveData(); updateDashboard(); renderList();
   const ok = document.getElementById('step2-save-ok');
   if (ok) { ok.style.display='inline'; setTimeout(()=>ok.style.display='none',2500); }
+}
+
+// ==================== APPROVAL GATE (ผู้ทบทวนอนุมัติก่อนส่ง SUPPLIER) ====================
+// การ์ดแสดงในขั้นตอนที่ 1: ก่อนอนุมัติ = ฟอร์มอนุมัติ / หลังอนุมัติ = ป้ายเขียว + ปุ่ม QR
+// ใบเก่าที่สร้างก่อนมีฟีเจอร์นี้ (ไม่ใช่ pending-approval และไม่มี approvedAt) จะไม่แสดงการ์ด — ไม่กระทบของเดิม
+function approvalCardHTML(n, idx) {
+  if (n.approvedAt) {
+    const d = new Date(n.approvedAt);
+    const when = isNaN(d) ? n.approvedAt : d.toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'});
+    return `
+    <div style="background:#e8f5e9;border:2px solid #4caf50;border-radius:10px;padding:14px 16px;margin-top:14px">
+      <div style="font-weight:700;color:#2e7d32;font-size:.95rem">✅ ผ่านการทบทวนและอนุมัติแล้ว</div>
+      <div style="font-size:.85rem;color:#33691e;margin-top:6px">
+        ผู้ทบทวน: <b>${escapeHTML(n.approvedBy || '-')}</b>
+        ${n.approvedByEmail ? ` · <span class="mono" style="font-size:.8rem">${escapeHTML(n.approvedByEmail)}</span>` : ''}
+        · ${escapeHTML(when)}
+      </div>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="showQRCodeModal('${n.id}')">📱 แสดง QR / ลิงก์ให้ Supplier</button>
+    </div>`;
+  }
+  if (n.status !== 'pending-approval') return ''; // ใบเก่าก่อนมี Approval Gate — ไม่ยุ่ง
+  const reviewerOpts = (settings.reviewers || []).map(r => `<option>${escapeHTML(r)}</option>`).join('');
+  return `
+  <div style="background:#f3e8ff;border:2px solid #9b59b6;border-radius:10px;padding:14px 16px;margin-top:14px">
+    <div style="font-weight:700;color:#6b21a8;font-size:.95rem">🟣 การทบทวนและอนุมัติ (Reviewer Approval)</div>
+    <div style="font-size:.85rem;color:#7e22ce;margin-top:4px">ต้องอนุมัติก่อน ระบบจึงจะสร้างลิงก์/QR ให้ Supplier ตอบกลับได้</div>
+    ${n.approvalReturned ? `
+    <div style="background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;padding:10px 12px;margin-top:10px;color:#92400e;font-size:.85rem">
+      <b>↩️ ถูกส่งกลับให้แก้ไข</b> โดย ${escapeHTML(n.approvalReturnedBy || '-')}<br>
+      <b>เหตุผล:</b> <span style="white-space:pre-wrap">${escapeHTML(n.approvalReturnReason || '-')}</span><br>
+      <span style="font-size:.8rem;color:#b45309">ผู้ออก NCR แก้ไขข้อมูล (ปุ่ม ✏️ ด้านล่าง) แล้วบันทึก เพื่อส่งให้ทบทวนใหม่</span>
+    </div>` : ''}
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-top:12px">
+      <div class="form-group" style="flex:1;min-width:200px;margin:0">
+        <label style="font-size:.8rem">ผู้ทบทวน (ลงนามอนุมัติ)</label>
+        <select id="approve-reviewer-select">
+          <option value="">-- เลือกชื่อผู้ทบทวน --</option>${reviewerOpts}
+        </select>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="approveNCRDoc(${idx})">✅ อนุมัติ + สร้างลิงก์ Supplier</button>
+      <button class="btn btn-secondary btn-sm" onclick="returnNCRForRevision(${idx})">↩️ ส่งกลับให้แก้ไข</button>
+    </div>
+  </div>`;
+}
+
+async function approveNCRDoc(idx) {
+  const n = ncrList[idx];
+  if (!n) return;
+  const sel = document.getElementById('approve-reviewer-select');
+  const reviewerName = sel ? sel.value.trim() : '';
+  if (!reviewerName) { showErrorToast('⚠️ กรุณาเลือกชื่อผู้ทบทวนก่อนอนุมัติ'); if (sel) sel.focus(); return; }
+  if (!confirm('ยืนยันการอนุมัติ NCR: ' + n.id + '\nโดยผู้ทบทวน: ' + reviewerName + '\n\nหลังอนุมัติ ระบบจะสร้างลิงก์/QR สำหรับส่งให้ Supplier ทันที')) return;
+
+  const now = new Date().toISOString();
+  n.approvedBy      = reviewerName;
+  n.approvedByEmail = (typeof auth !== 'undefined' && auth && auth.currentUser) ? (auth.currentUser.email || '') : '';
+  n.approvedAt      = now;
+  n.updatedAt       = now;
+  delete n.approvalReturned; delete n.approvalReturnReason; delete n.approvalReturnedBy; delete n.approvalReturnedAt;
+  if (n.status === 'pending-approval') n.status = 'waiting-reply';
+  // Audit Trail: จดเหตุการณ์อนุมัติสะสม (ISO 9001 ข้อ 8.7 — ผู้มีอำนาจตัดสินใจต้องตรวจสอบย้อนได้)
+  if (!Array.isArray(n.approvalHistory)) n.approvalHistory = [];
+  n.approvalHistory.push({ _event: 'approved', _at: now, by: reviewerName, email: n.approvedByEmail });
+
+  // Security: สร้าง reply token "ตอนอนุมัติ" (ถ้ายังไม่มี) — ก่อนหน้านี้ลิงก์ใช้ไม่ได้จริงเพราะไม่มี token
+  try {
+    const tokSnap = await dbRef.replyToken(n.id).once('value');
+    if (!tokSnap.exists() || !tokSnap.val()) {
+      await dbRef.replyToken(n.id).set(generateReplyToken());
+    }
+  } catch(e) { console.warn('สร้าง reply token ตอนอนุมัติไม่สำเร็จ:', e.message); }
+
+  await saveData(); updateDashboard(); renderList();
+  showAlert('✅ อนุมัติแล้ว: ' + n.id + ' — พร้อมส่งลิงก์ให้ Supplier');
+  closeModal('view-modal');
+  showQRCodeModal(n.id); // เด้ง QR ให้เลย ผู้ทบทวน/QC copy ส่ง Supplier ได้ทันที
+}
+
+async function returnNCRForRevision(idx) {
+  const n = ncrList[idx];
+  if (!n) return;
+  const sel = document.getElementById('approve-reviewer-select');
+  const reviewerName = sel ? sel.value.trim() : '';
+  const reason = prompt('เหตุผลที่ส่งกลับให้ผู้ออก NCR แก้ไข:\n(จะแสดงให้ผู้ออกเห็นในขั้นตอนที่ 1)');
+  if (reason === null) return; // กดยกเลิก
+  if (!reason.trim()) { showErrorToast('⚠️ กรุณาระบุเหตุผล เพื่อให้ผู้ออกรู้ว่าต้องแก้จุดไหน'); return; }
+
+  const now = new Date().toISOString();
+  n.approvalReturned     = true;
+  n.approvalReturnReason = reason.trim();
+  n.approvalReturnedBy   = reviewerName || ((typeof auth !== 'undefined' && auth && auth.currentUser) ? (auth.currentUser.email || '-') : '-');
+  n.approvalReturnedAt   = now;
+  n.updatedAt            = now;
+  if (!Array.isArray(n.approvalHistory)) n.approvalHistory = [];
+  n.approvalHistory.push({ _event: 'returned-for-revision', _at: now, by: n.approvalReturnedBy, reason: reason.trim() });
+
+  await saveData(); updateDashboard(); renderList();
+  showAlert('↩️ ส่งกลับให้ผู้ออก NCR แก้ไขแล้ว: ' + n.id);
+  viewNCR(idx); // รีเฟรชให้เห็นกล่องเหตุผลทันที
 }
 
 // ==================== ส่งกลับให้ SUPPLIER แก้ไข ====================
@@ -3179,7 +3308,7 @@ function buildNCRFormHTML(n) {
       supplierReplyDate: fresh.supplierReplyDate
     });
   }
-  const statusLabel = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
+  const statusLabel = {open:'เปิดใหม่','pending-approval':'รออนุมัติ','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
   const line = (v) => escapeHTML(v) || '';
   // ลายเซ็นดิจิตอล
   const sigImg = (name, w=200) => {
@@ -3547,7 +3676,7 @@ function printNCRForm() {
 
 function printReport() {
   const n = currentPrintData;
-  const statusLabel = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
+  const statusLabel = {open:'เปิดใหม่','pending-approval':'รออนุมัติ','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'}[n.status] || n.status;
   const win = window.open('', '_blank', 'width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head>
     <meta charset="UTF-8">
@@ -3967,7 +4096,7 @@ function doExport(format) {
 
   const dateStr = new Date().toISOString().slice(0,10);
   const headers = ['เลขที่เอกสาร','วันที่','ประเภท','บริษัท/หน่วยงาน','แผนก','เรื่อง','รหัสสินค้า','รายละเอียดข้อบกพร่อง','สาเหตุ','การแก้ไข','การป้องกัน','ผู้รายงาน','ผู้ทบทวน','สถานะ','หมายเหตุ'];
-  const statusMap = {open:'เปิดใหม่','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'};
+  const statusMap = {open:'เปิดใหม่','pending-approval':'รออนุมัติ','waiting-reply':'รอตอบกลับ','waiting-audit':'รอตรวจติดตาม',closed:'ปิดแล้ว'};
 
   const rows = filtered.map(n => [
     n.id, n.date, n.id && n.id.startsWith('NCRW') ? 'NCRW' : 'NCR',
@@ -4109,12 +4238,51 @@ document.addEventListener('click', function(e) {
         // หลังจากบันทึกสำเร็จเท่านั้นจึงแสดง QR
         // Bug fix (QR ชี้เลขผิด): ใช้เลขที่เอกสารจริงหลังบันทึก (ระบบอาจออกเลขใหม่ถ้าเลขที่กรอกซ้ำกับที่มีอยู่)
         if (isNew && saveOk) {
-            showQRCodeModal(window._lastSavedNcrId || docNum);
+            const savedId  = window._lastSavedNcrId || docNum;
+            const savedNcr = ncrList.find(x => x.id === savedId);
+            // Approval Gate: ใบใหม่ที่รออนุมัติ — ยังไม่มี token จึงไม่เด้ง QR แต่บอกขั้นตอนถัดไปแทน
+            if (savedNcr && savedNcr.status === 'pending-approval') {
+                showApprovalPendingNotice(savedId);
+            } else {
+                showQRCodeModal(savedId);
+            }
         }
+    };
+
+    // แจ้งขั้นตอนถัดไปหลังบันทึกใบใหม่ที่ต้องรออนุมัติ
+    window.showApprovalPendingNotice = function(id) {
+        const old = document.getElementById('approval-pending-modal');
+        if (old) old.remove();
+        const html = `
+            <div id="approval-pending-modal" class="modal-overlay show">
+                <div class="modal" style="max-width:420px;text-align:center">
+                    <div class="modal-header">
+                        <div class="modal-title">🟣 บันทึกแล้ว — รอผู้ทบทวนอนุมัติ</div>
+                        <button class="modal-close" onclick="document.getElementById('approval-pending-modal').remove()">✕</button>
+                    </div>
+                    <div class="modal-body">
+                        <p style="margin-bottom:12px">NCR <b class="ncr-id">${id}</b> ถูกบันทึกในสถานะ <b style="color:#9b59b6">รออนุมัติ</b></p>
+                        <p style="color:var(--text-muted);font-size:.9rem;margin-bottom:16px">
+                            ลิงก์/QR สำหรับ Supplier จะถูกสร้างเมื่อ<b>ผู้ทบทวนกดอนุมัติ</b>ในหน้ารายละเอียด NCR (ขั้นตอนที่ 1)
+                        </p>
+                        <button class="btn btn-primary" onclick="document.getElementById('approval-pending-modal').remove()">รับทราบ</button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.insertAdjacentHTML('beforeend', html);
+        const ov = document.getElementById('approval-pending-modal');
+        if (ov) ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
     };
 
     // 5. ฟังก์ชันแสดง QR Code Modal
     window.showQRCodeModal = async function(id) {
+        // Approval Gate: ห้ามสร้าง/แสดงลิงก์ก่อนผ่านการอนุมัติ (กันเรียกจากที่อื่นโดยไม่ตั้งใจ)
+        const _gn = ncrList.find(x => x.id === id);
+        if (_gn && _gn.status === 'pending-approval' && !_gn.approvedAt) {
+            if (typeof showErrorToast === 'function') showErrorToast('🔒 ใบนี้ยังไม่ผ่านการอนุมัติจากผู้ทบทวน — ยังสร้างลิงก์ Supplier ไม่ได้');
+            else alert('ใบนี้ยังไม่ผ่านการอนุมัติจากผู้ทบทวน');
+            return;
+        }
         const baseUrl = window.location.origin + window.location.pathname;
         // Security: ดึงรหัสลับประจำใบมาต่อท้ายลิงก์ — Rules ฝั่ง Firebase จะรับเฉพาะการตอบกลับที่มีรหัสตรง
         let replyUrl = `${baseUrl}?mode=reply&id=${id}`;
@@ -4225,6 +4393,21 @@ document.addEventListener('click', function(e) {
                         + 'ในส่วน rules เพื่อให้ Supplier เข้าถึงได้</div>'
                         + '<div style="margin-top:20px"><button onclick="location.reload()" style="background:var(--accent);color:#fff;border:none;padding:10px 24px;border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer;font-family:Sarabun,sans-serif">🔄 ลองใหม่</button></div>';
                     _fp.appendChild(_sm);
+                }
+                return;
+            }
+            // Approval Gate: ใบที่ยังไม่ผ่านการอนุมัติ — ไม่เปิดรับตอบกลับ (token ก็ยังไม่มีอยู่แล้ว นี่คือชั้นแจ้งเตือนให้ผู้ใช้เข้าใจ)
+            if (ncr && ncr.status === 'pending-approval') {
+                const _fp2 = document.getElementById('page-new-ncr');
+                if (typeof showPage === 'function') showPage('new-ncr');
+                if (_fp2 && !document.getElementById('reply-status-msg')) {
+                    const _sm2 = document.createElement('div');
+                    _sm2.id = 'reply-status-msg';
+                    _sm2.style.cssText = 'text-align:center;padding:48px 24px;font-family:Sarabun,sans-serif';
+                    _sm2.innerHTML = '<div style="font-size:2.5rem;margin-bottom:14px">⏳</div>'
+                        + '<div style="color:#9b59b6;font-size:1.05rem;font-weight:600">ใบ NCR นี้ยังไม่เปิดให้ตอบกลับ</div>'
+                        + '<div style="color:var(--text-muted);font-size:.9rem;margin-top:10px">เอกสารอยู่ระหว่างการทบทวนภายใน กรุณารอลิงก์/QR ฉบับทางการจากผู้ออก NCR</div>';
+                    _fp2.appendChild(_sm2);
                 }
                 return;
             }
@@ -4660,6 +4843,9 @@ document.addEventListener('click', function(e) {
           </label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.9rem">
             <input type="checkbox" class="exp-status" value="open" checked> 🔴 เปิดใหม่
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.9rem">
+            <input type="checkbox" class="exp-status" value="pending-approval" checked> 🟣 รออนุมัติ
           </label>
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.9rem">
             <input type="checkbox" class="exp-status" value="waiting-reply" checked> 🟡 รอตอบกลับ
