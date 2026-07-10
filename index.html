@@ -3108,7 +3108,9 @@ async function syncApproverEmailsNode() {
 async function saveNotifyWebhook() {
   const el = document.getElementById('notify-webhook-url');
   settings.notifyWebhookUrl = (el.value || '').trim();
-  await saveData(); showSaveAlert();
+  await saveData();
+  // UX fix: ใช้ toast ลอย (มองเห็นเสมอ) แทนแถบท้ายหน้าที่อยู่นอกจอบนแท็บเล็ต
+  showAlert(settings.notifyWebhookUrl ? '✅ บันทึก Webhook แจ้งเตือนเรียบร้อย' : '🔕 ปิดการแจ้งเตือนแล้ว (Webhook ว่าง)');
 }
 
 function sendNotify(text) {
