@@ -2348,6 +2348,7 @@ async function saveNCR() {
     ncrList.push(ncr);
   }
 
+  markNCRDirty(ncr.id); // ข้อ 1: ต้อง mark ก่อน saveData ไม่งั้นใบใหม่ไม่ถูกเขียนขึ้น Firebase
   await saveData();
   clearForm();
   updateDashboard();
@@ -2356,7 +2357,6 @@ async function saveNCR() {
   showPage('ncr-list');
   // Bug fix (QR ชี้เลขผิด): จดเลขที่เอกสาร "จริง" ที่บันทึก — เผื่อกรณีเลขซ้ำแล้วระบบออกเลขใหม่ให้อัตโนมัติ
   window._lastSavedNcrId = ncr.id;
-  markNCRDirty(ncr.id); // ข้อ 1: บันทึกเฉพาะใบนี้
   // Security: สร้างรหัสลับประจำใบ (32 ตัวอักษรสุ่ม) เฉพาะ "ใบใหม่" เท่านั้น
   // (ห้ามสร้างซ้ำตอนแก้ไข — ไม่งั้น QR ที่แจก Supplier ไปแล้วจะใช้ไม่ได้)
   // Approval Gate: ใบที่รออนุมัติ "ยังไม่สร้าง token" — token จะถูกสร้างตอนผู้ทบทวนกดอนุมัติ
