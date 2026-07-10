@@ -2794,6 +2794,7 @@ function viewNCR(idx) {
       <div style="display:flex;gap:8px;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
         <button class="btn btn-secondary btn-sm" onclick="editNCR(${idx});closeModal('view-modal')">✏️ แก้ไข NCR</button>
         <button class="btn btn-primary btn-sm" onclick="openPrint(${idx})">🖨 พิมพ์ฟอร์ม</button>
+        ${n.approvedAt ? `<button class="btn btn-secondary btn-sm" onclick="showQRCodeModalByIdx(${idx})">📱 ดู QR / ลิงก์ย้อนหลัง</button>` : ''}
         <button class="btn btn-info btn-sm" style="margin-left:auto" onclick="switchStep(2)">ไปขั้นตอนที่ 2 →</button>
       </div>
     </div>
@@ -4546,6 +4547,13 @@ document.addEventListener('click', function(e) {
                 container.innerHTML = '<div style="color:#b45309;font-size:.85rem;padding:12px;text-align:center">⚠️ สร้าง QR ไม่สำเร็จ — ใช้ปุ่มคัดลอกลิงก์แทน</div>';
             }
         }, 100);
+    };
+
+    // เรียก QR/ลิงก์ย้อนหลังจากปุ่มในหน้ารายละเอียด — ส่งด้วย index กัน id ที่มี / หรือ ' ทำ onclick พัง
+    window.showQRCodeModalByIdx = function(idx) {
+        const n = ncrList[idx];
+        if (!n) { if (typeof showErrorToast === 'function') showErrorToast('ไม่พบรายการ NCR'); return; }
+        showQRCodeModal(n.id);
     };
 
     window.copyToClipboard = function(text) {
