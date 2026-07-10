@@ -1538,6 +1538,24 @@ async function loadData() {
       ncrList = ncrList.filter(x => x !== null && x !== undefined);
     }
 
+    // Backfill (ทำครั้งเดียวต่อใบ): ใบเก่าที่มี token ใน reply_tokens แต่ยังไม่มี replyToken ในตัวใบ
+    // จำเป็นสำหรับ Rules แบบ query-based read — ไม่งั้นลิงก์เก่าที่ส่ง Supplier ไปแล้วจะเปิดไม่ได้
+    try {
+      const allTokSnap = await db.ref('ncr_system/reply_tokens').once('value');
+      if (allTokSnap.exists()) {
+        const toks = allTokSnap.val() || {};
+        for (const ncr of ncrList) {
+          if (!ncr || !ncr.id || ncr.replyToken) continue;
+          const k = ncr.id.replace(/\//g, '_');
+          if (toks[k]) {
+            ncr.replyToken = toks[k];
+            try { await dbRef.ncrItem(ncr.id).update({ replyToken: toks[k] }); }
+            catch(be) { console.warn('backfill replyToken ' + ncr.id + ':', be.message); }
+          }
+        }
+      }
+    } catch(e) { console.warn('backfill replyToken skipped:', e.message); }
+
     // โหลด BP Names (Suppliers)
     const bSnap = await dbRef.bpNames().once('value');
     if (bSnap.exists()) {
@@ -1644,6 +1662,8 @@ async function saveData() {
         const n = ncrList.find(x => x && x.id === id);
         if (n && n.status === 'closed') {
           try { await dbRef.replyToken(id).remove(); } catch(e) { console.warn('ลบ token ใบปิดไม่สำเร็จ:', e.message); }
+          // ลบ replyToken ในตัวใบด้วย — ลิงก์เก่าจะอ่านใบไม่ได้อีก (ตายสนิทตามหลัก token lifecycle)
+          try { await dbRef.ncrItem(id).update({ replyToken: null }); delete n.replyToken; } catch(e) { console.warn('ลบ replyToken ในใบปิดไม่สำเร็จ:', e.message); }
         }
       }
       _dirtyNCRs.clear();
@@ -1717,7 +1737,22 @@ function loadNcrForSupplier(ncrId) {
 }
 
 // Async version สำหรับ supplier reply mode
+// Security (query-based read): อ่านใบผ่าน query ที่กรองด้วย replyToken — Rules ใหม่อนุญาตเฉพาะ query แบบนี้
+// คนไม่มี token ที่ถูกต้องจะอ่านข้อมูลใบไม่ได้เลย (ปิดช่องเดาเลข NCR แล้วดึงข้อมูล)
 async function loadNcrForSupplierAsync(ncrId) {
+  const _tok = new URLSearchParams(window.location.search).get('token');
+  if (_tok) {
+    try {
+      const qSnap = await db.ref('ncr_system/ncr_list').orderByChild('replyToken').equalTo(_tok).once('value');
+      if (qSnap.exists()) {
+        const vals = Object.values(qSnap.val() || {}).filter(x => x);
+        // ยืนยันว่าใบที่ได้ตรงกับเลขในลิงก์ (กัน token สลับใบ)
+        const hit = vals.find(x => x.id === ncrId) || vals[0];
+        if (hit) return hit;
+      }
+    } catch(qe) { console.warn('query-based read ไม่สำเร็จ (อาจยังใช้ Rules ชุดเก่า) — ลองอ่านตรง:', qe.message); }
+  }
+  // ทางเดิม: อ่านตรงตาม id — ใช้ได้กรณี login แล้ว หรือ Rules ยังเป็นชุดเก่า (.read: true)
   try {
     const snap = await dbRef.ncrItem(ncrId).once('value');
     return snap.exists() ? snap.val() : null;
@@ -2365,6 +2400,9 @@ async function saveNCR() {
     try {
       const tok = generateReplyToken();
       await dbRef.replyToken(ncr.id).set(tok);
+      // Query-based read: เก็บ token ในตัวใบด้วย (บันทึกหลัง saveData แล้ว จึงเขียนตรงขึ้น Firebase)
+      ncr.replyToken = tok;
+      await dbRef.ncrItem(ncr.id).update({ replyToken: tok });
     } catch(e) { console.warn('สร้าง reply token ไม่สำเร็จ (ลิงก์ยังใช้ได้แบบไม่มี token):', e.message); }
   }
   return true; // Bug fix: ยืนยันว่าบันทึกสำเร็จจริง (QR wrapper ใช้เช็ก)
@@ -3138,10 +3176,14 @@ async function approveNCRDoc(idx) {
   // Security: สร้าง reply token "ตอนอนุมัติ" (ถ้ายังไม่มี) — ก่อนหน้านี้ลิงก์ใช้ไม่ได้จริงเพราะไม่มี token
   try {
     const tokSnap = await dbRef.replyToken(n.id).once('value');
-    if (!tokSnap.exists() || !tokSnap.val()) {
-      await dbRef.replyToken(n.id).set(generateReplyToken());
+    let _tok = (tokSnap.exists() && tokSnap.val()) ? tokSnap.val() : null;
+    if (!_tok) {
+      _tok = generateReplyToken();
+      await dbRef.replyToken(n.id).set(_tok);
       n.replyTokenCreatedAt = now; // ข้อ 5: ใช้ตรวจอายุลิงก์ (90 วัน)
     }
+    // Query-based read: เก็บ token ไว้ในตัวใบด้วย — Supplier อ่านใบผ่าน query ที่ต้องรู้ token นี้
+    n.replyToken = _tok;
   } catch(e) { console.warn('สร้าง reply token ตอนอนุมัติไม่สำเร็จ:', e.message); }
 
   markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
