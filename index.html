@@ -4637,11 +4637,31 @@ document.addEventListener('click', function(e) {
                     return;
                 }
             }
-            if (ncr) {
-                // แสดงหน้าฟอร์ม
+            // ล็อกหลังตอบครั้งแรก: ถ้า Supplier เคยส่งคำตอบแล้ว (มี supplierReply / status เลย waiting-reply)
+            // และ QC ไม่ได้ตีกลับให้แก้ (returnRequested) → ปิดฟอร์ม แสดงหน้ายืนยันอย่างเดียว
+            // ป้องกันกรณี Supplier ส่งลิงก์ต่อให้บุคคลที่ 3 มาแก้ทับคำตอบเดิม
+            const _alreadyReplied = ncr && !ncr.returnRequested &&
+                (ncr.supplierReply || (ncr.status && ncr.status !== 'waiting-reply' && ncr.status !== 'open' && ncr.status !== 'pending-approval'));
+            if (_alreadyReplied) {
+                const _fp4 = document.getElementById('page-new-ncr');
                 if (typeof showPage === 'function') showPage('new-ncr');
-                
-                // เพิ่ม Header สำหรับ Reply Mode
+                if (_fp4 && !document.getElementById('reply-status-msg')) {
+                    const _repliedWhen = ncr.supplierReplyDate ? ncr.supplierReplyDate.split('-').reverse().join('/') : (ncr.updatedAt ? new Date(ncr.updatedAt).toLocaleDateString('th-TH') : '-');
+                    const _sm4 = document.createElement('div');
+                    _sm4.id = 'reply-status-msg';
+                    _sm4.style.cssText = 'text-align:center;padding:48px 24px;font-family:Sarabun,sans-serif';
+                    _sm4.innerHTML = '<div style="font-size:2.5rem;margin-bottom:14px">✅</div>'
+                        + '<div style="color:#2e7d32;font-size:1.1rem;font-weight:700">ใบ NCR นี้ได้รับการตอบกลับเรียบร้อยแล้ว</div>'
+                        + '<div style="color:var(--text-muted);font-size:.92rem;margin-top:10px;max-width:460px;margin-left:auto;margin-right:auto">'
+                        + 'เลขที่เอกสาร: <b>' + escapeHTML(ncr.id || ncrId) + '</b><br>'
+                        + 'วันที่ตอบกลับ: <b>' + escapeHTML(_repliedWhen) + '</b><br><br>'
+                        + 'ลิงก์นี้ถูกปิดรับการตอบกลับแล้ว เพื่อรักษาข้อมูลที่บันทึกไว้ไม่ให้ถูกแก้ไข<br>'
+                        + 'หากต้องการแก้ไขข้อมูล กรุณาติดต่อผู้ออก NCR โดยตรง</div>';
+                    _fp4.appendChild(_sm4);
+                }
+                return;
+            }
+            if (ncr) {
                 const noticeFormPage = document.getElementById('page-new-ncr');
                 if (noticeFormPage && !document.getElementById('reply-notice')) {
                     const notice = document.createElement('div');
