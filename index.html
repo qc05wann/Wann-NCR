@@ -2770,33 +2770,92 @@ async function scanGhostReplies() {
     if (!snap.exists()) { if (st) st.textContent = '✅ ไม่มีข้อมูลใน supplier_reply เลย'; return; }
     const all = snap.val() || {};
     // แปลง id ของใบที่มีอยู่จริงเป็นชื่อ node แบบเดียวกัน (ไปทางเดียว ปลอดภัยกว่าแปลงกลับ)
-    const liveKeys = new Set(ncrList.filter(n => n && n.id).map(n => n.id.replace(/\//g, '_')));
-    Object.keys(all).forEach(k => { if (!liveKeys.has(k)) _ghostFound.push({ key: k, data: all[k] }); });
+    const liveByKey = {};
+    ncrList.forEach(n => { if (n && n.id) liveByKey[n.id.replace(/\//g, '_')] = n; });
+
+    Object.keys(all).forEach(k => {
+      const d = all[k] || {};
+      const live = liveByKey[k];
+      // ผีแท้: ไม่มีใบ NCR เลขนี้ในระบบแล้ว
+      if (!live) { _ghostFound.push({ key: k, data: d, kind: 'orphan' }); return; }
+      // FIX-C4 ผีเลขซ้ำ: มีใบอยู่จริง แต่คำตอบถูกบันทึก "ก่อน" ใบถูกสร้าง
+      // = คำตอบของใบเก่าที่ถูกลบไปแล้วแต่เลขที่ถูกนำกลับมาใช้ซ้ำ
+      if (d.updatedAt && live.createdAt && d.updatedAt < live.createdAt) {
+        _ghostFound.push({ key: k, data: d, kind: 'stale', ncr: live });
+      }
+    });
 
     if (!_ghostFound.length) {
       if (st) st.textContent = '✅ สะอาด — คำตอบทุกรายการมีใบ NCR คู่กันครบ (' + Object.keys(all).length + ' รายการ)';
       return;
     }
-    if (st) st.textContent = '⚠️ พบข้อมูลผี ' + _ghostFound.length + ' รายการ (จากทั้งหมด ' + Object.keys(all).length + ' รายการ)';
+    const nStale = _ghostFound.filter(g => g.kind === 'stale').length;
+    if (st) st.textContent = '⚠️ พบข้อมูลผี ' + _ghostFound.length + ' รายการ'
+      + (nStale ? ' (ในนั้นเป็นแบบ "เลขซ้ำ" ' + nStale + ' รายการ — ปนเปื้อนเข้าใบจริงแล้ว)' : '')
+      + ' จากทั้งหมด ' + Object.keys(all).length + ' รายการ';
     if (box) {
       box.innerHTML =
         _ghostFound.map(g => {
           const d = g.data || {};
           const when = d.updatedAt ? new Date(d.updatedAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
-          return '<div style="background:var(--surface2);border-left:3px solid var(--warning);border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:.82rem">'
-            + '<div style="font-family:monospace;font-weight:700">' + escapeHTML(g.key.replace(/_/g, '/')) + '</div>'
-            + '<div style="color:var(--text-muted);margin-top:4px">บันทึกล่าสุด: ' + escapeHTML(when) + '</div>'
+          const isStale = g.kind === 'stale';
+          const born = (isStale && g.ncr && g.ncr.createdAt)
+            ? new Date(g.ncr.createdAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '';
+          return '<div style="background:var(--surface2);border-left:3px solid ' + (isStale ? 'var(--danger)' : 'var(--warning)')
+            + ';border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:.82rem">'
+            + '<div style="font-family:monospace;font-weight:700">' + escapeHTML(g.key.replace(/_/g, '/'))
+            + ' <span style="font-family:inherit;font-size:.75rem;padding:1px 6px;border-radius:4px;background:'
+            + (isStale ? 'rgba(229,57,53,.15);color:#e53935">🔴 เลขซ้ำ — ปนเปื้อนใบจริงแล้ว' : 'rgba(255,152,0,.15);color:#ff9800">🟠 ไม่มีใบคู่กัน')
+            + '</span></div>'
+            + '<div style="color:var(--text-muted);margin-top:4px">คำตอบบันทึกเมื่อ: ' + escapeHTML(when)
+            + (born ? ' &nbsp;|&nbsp; ใบปัจจุบันสร้างเมื่อ: ' + escapeHTML(born) : '') + '</div>'
             + '<div style="margin-top:4px">ผู้ตอบ: <b>' + escapeHTML(d.supplierPerson || '-') + '</b>'
             + ' &nbsp;|&nbsp; คำตอบ: ' + escapeHTML(String(d.supplierReply || '-').substring(0, 60)) + '</div>'
+            + (isStale ? '<div style="margin-top:8px"><button class="btn btn-warning btn-xs" onclick="cleanStaleNcr(\'' + g.key + '\')">🧼 ล้างข้อมูลปนเปื้อนออกจากใบนี้</button></div>' : '')
             + '</div>';
         }).join('')
         + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
-        + '<button class="btn btn-danger btn-sm" onclick="deleteGhostReplies()">🗑️ ดาวน์โหลดสำเนา แล้วลบทั้งหมด</button>'
+        + '<button class="btn btn-danger btn-sm" onclick="deleteGhostReplies()">🗑️ ดาวน์โหลดสำเนา แล้วลบคำตอบทั้งหมด</button>'
         + '</div>';
     }
   } catch(e) {
     console.error('scanGhostReplies:', e);
     if (st) st.textContent = '❌ สแกนไม่สำเร็จ: ' + (e.code || e.message);
+  }
+}
+
+// FIX-C4: ล้าง "เฉพาะฟิลด์ที่ merge เข้ามา" ออกจากใบ NCR ที่ปนเปื้อน
+// ข้อมูลที่ QC กรอกเอง (เรื่อง / ข้อบกพร่อง / รูป / สาเหตุ) ไม่ถูกแตะ
+const _MERGED_FIELDS = ['supplierReply','supplierCA','supplierPreventive','supplierReplyDate',
+                        'supplierPerson','supplierPosition','actionStartDate','actionDuration',
+                        'auditDueDate','fixAcknowledgeDate'];
+
+async function cleanStaleNcr(key) {
+  const g = _ghostFound.find(x => x.key === key && x.kind === 'stale');
+  if (!g) return;
+  const idx = ncrList.findIndex(n => n && n.id && n.id.replace(/\//g, '_') === key);
+  if (idx < 0) { showErrorToast('⚠️ ไม่พบใบ NCR นี้แล้ว'); return; }
+  const n = ncrList[idx];
+  const has = _MERGED_FIELDS.filter(f => n[f] !== undefined && n[f] !== '');
+  if (!has.length) { showAlert('✅ ใบ ' + n.id + ' สะอาดอยู่แล้ว'); return; }
+
+  if (!confirm('จะล้างข้อมูลคำตอบ Supplier ที่ปนเปื้อนออกจากใบ ' + n.id + '\n\n'
+    + 'ฟิลด์ที่จะถูกล้าง (' + has.length + '):\n• ' + has.join('\n• ')
+    + '\n\nข้อมูลที่คุณกรอกเอง (เรื่อง / รายละเอียดข้อบกพร่อง / รูป / สาเหตุ) จะไม่ถูกแตะ\n\nยืนยันหรือไม่?')) return;
+
+  try {
+    // ต้องส่ง null ขึ้น Firebase ถึงจะลบฟิลด์ออกจริง — แค่ delete ในหน่วยความจำไม่พอ
+    const patch = {};
+    _MERGED_FIELDS.forEach(f => { patch[f] = null; delete n[f]; });
+    patch.updatedAt = n.updatedAt = new Date().toISOString();
+    await dbRef.ncrItem(n.id).update(patch);
+    markNCRDirty(n.id);
+    updateDashboard(); renderList();
+    showAlert('✅ ล้างข้อมูลปนเปื้อนออกจาก ' + n.id + ' แล้ว (' + has.length + ' ฟิลด์)');
+    scanGhostReplies();
+  } catch(e) {
+    console.error('cleanStaleNcr:', e);
+    showErrorToast('❌ ล้างไม่สำเร็จ: ' + (e.code || e.message));
   }
 }
 
