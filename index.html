@@ -1146,6 +1146,21 @@
     <div id="backup-status" style="font-size:.82rem;margin-top:10px;color:var(--text-muted)"></div>
   </div>
 
+  <!-- FIX-C3: เครื่องมือตรวจหาคำตอบ Supplier ที่ไม่มีใบ NCR คู่กันแล้ว -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="card-header"><div class="card-title">🧹 ตรวจหาข้อมูลผี (Orphan Supplier Reply)</div></div>
+    <div style="font-size:.82rem;color:var(--text-muted);margin-bottom:12px">
+      เมื่อลบ NCR ทิ้ง คำตอบของ Supplier อาจค้างอยู่ในฐานข้อมูล ถ้าใบใหม่ได้เลขที่เดิม
+      ระบบจะดูดข้อมูลเก่ากลับเข้ามาโดยไม่ตั้งใจ — กดสแกนเพื่อตรวจสอบ
+      <b>ระบบจะแสดงรายการให้ดูก่อนเสมอ และดาวน์โหลดสำเนาเก็บไว้ก่อนลบ</b>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-info btn-sm" onclick="scanGhostReplies()">🔍 สแกนหาข้อมูลผี</button>
+    </div>
+    <div id="ghost-status" style="font-size:.82rem;margin-top:10px;color:var(--text-muted)"></div>
+    <div id="ghost-result" style="margin-top:10px"></div>
+  </div>
+
   <div class="form-grid form-grid-3">
     <!-- Reporters -->
     <div class="card">
@@ -1433,6 +1448,7 @@ const dbRef = {
   ncrItem:       (id) => db.ref('ncr_system/ncr_list/' + id.replace(/\//g, '_')),
   bpNames:       () => db.ref('ncr_system/bp_names'),
   supplierReply: (id) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_')),
+  supplierReplyRoot: () => db.ref('ncr_system/supplier_reply'),   // FIX-C3: ใช้สแกนหาข้อมูลผี
   // ประวัติการตอบกลับ: เก็บใต้ supplier_reply เพื่อให้ Supplier เขียนได้ตาม Rules เดิม (สิทธิ์ครอบคลุมลูกทั้งหมด)
   supplierReplyHistory: (id, key) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_') + '/history/' + key),
   // รหัสลับประจำใบ (Reply Token): อ่านได้เฉพาะคน login — Rules ใช้ตรวจว่าลิงก์ตอบกลับเป็นของจริง
@@ -1623,6 +1639,12 @@ async function loadData() {
           const rSnap = await dbRef.supplierReply(ncr.id).once('value');
           if (!rSnap.exists()) return;
           const r = rSnap.val();
+          // FIX-C2: กันข้อมูลผี — ถ้าคำตอบถูกบันทึกไว้ "ก่อน" ใบนี้ถูกสร้าง
+          // แปลว่าเป็นของใบเก่าที่ใช้เลขที่เดียวกันแล้วถูกลบไป ต้องไม่ดูดกลับเข้ามา
+          if (r.updatedAt && ncr.createdAt && r.updatedAt < ncr.createdAt) {
+            console.warn('ข้ามคำตอบผีของ ' + ncr.id + ' (คำตอบ ' + r.updatedAt + ' เก่ากว่าใบ ' + ncr.createdAt + ')');
+            return;
+          }
           // กรณีส่งกลับให้แก้: ดึงเฉพาะฉบับที่ Supplier ส่ง "หลัง" เวลาที่ QC ส่งกลับเท่านั้น
           if (waitingRevision && !(r.updatedAt && ncr.returnedAt && r.updatedAt > ncr.returnedAt)) return;
           if (r.supplierReply)      ncrList[idx].supplierReply      = r.supplierReply;
@@ -2733,6 +2755,87 @@ async function exportBackup() {
   if (st) st.textContent = '✅ ดาวน์โหลดไฟล์สำรองแล้ว (' + ncrList.length + ' NCR) — อย่าลืมเก็บเข้า Google Drive';
 }
 
+// ==================== FIX-C3: ตรวจหาข้อมูลผี ====================
+// "ผี" = คำตอบ Supplier ที่ค้างใน supplier_reply แต่ไม่มีใบ NCR เลขนั้นอยู่ในระบบแล้ว
+let _ghostFound = [];
+
+async function scanGhostReplies() {
+  const st  = document.getElementById('ghost-status');
+  const box = document.getElementById('ghost-result');
+  if (st)  st.textContent = '⏳ กำลังสแกน...';
+  if (box) box.innerHTML = '';
+  _ghostFound = [];
+  try {
+    const snap = await dbRef.supplierReplyRoot().once('value');
+    if (!snap.exists()) { if (st) st.textContent = '✅ ไม่มีข้อมูลใน supplier_reply เลย'; return; }
+    const all = snap.val() || {};
+    // แปลง id ของใบที่มีอยู่จริงเป็นชื่อ node แบบเดียวกัน (ไปทางเดียว ปลอดภัยกว่าแปลงกลับ)
+    const liveKeys = new Set(ncrList.filter(n => n && n.id).map(n => n.id.replace(/\//g, '_')));
+    Object.keys(all).forEach(k => { if (!liveKeys.has(k)) _ghostFound.push({ key: k, data: all[k] }); });
+
+    if (!_ghostFound.length) {
+      if (st) st.textContent = '✅ สะอาด — คำตอบทุกรายการมีใบ NCR คู่กันครบ (' + Object.keys(all).length + ' รายการ)';
+      return;
+    }
+    if (st) st.textContent = '⚠️ พบข้อมูลผี ' + _ghostFound.length + ' รายการ (จากทั้งหมด ' + Object.keys(all).length + ' รายการ)';
+    if (box) {
+      box.innerHTML =
+        _ghostFound.map(g => {
+          const d = g.data || {};
+          const when = d.updatedAt ? new Date(d.updatedAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
+          return '<div style="background:var(--surface2);border-left:3px solid var(--warning);border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:.82rem">'
+            + '<div style="font-family:monospace;font-weight:700">' + escapeHTML(g.key.replace(/_/g, '/')) + '</div>'
+            + '<div style="color:var(--text-muted);margin-top:4px">บันทึกล่าสุด: ' + escapeHTML(when) + '</div>'
+            + '<div style="margin-top:4px">ผู้ตอบ: <b>' + escapeHTML(d.supplierPerson || '-') + '</b>'
+            + ' &nbsp;|&nbsp; คำตอบ: ' + escapeHTML(String(d.supplierReply || '-').substring(0, 60)) + '</div>'
+            + '</div>';
+        }).join('')
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
+        + '<button class="btn btn-danger btn-sm" onclick="deleteGhostReplies()">🗑️ ดาวน์โหลดสำเนา แล้วลบทั้งหมด</button>'
+        + '</div>';
+    }
+  } catch(e) {
+    console.error('scanGhostReplies:', e);
+    if (st) st.textContent = '❌ สแกนไม่สำเร็จ: ' + (e.code || e.message);
+  }
+}
+
+async function deleteGhostReplies() {
+  if (!_ghostFound.length) return;
+  const names = _ghostFound.map(g => g.key.replace(/_/g, '/')).join('\n• ');
+  if (!confirm('ระบบจะดาวน์โหลดสำเนาเก็บไว้ก่อน แล้วจึงลบรายการเหล่านี้:\n\n• ' + names
+    + '\n\nยืนยันหรือไม่?')) return;
+
+  const st = document.getElementById('ghost-status');
+  // 1) ดาวน์โหลดสำเนาก่อนเสมอ — ลบแล้วกู้คืนไม่ได้
+  try {
+    const dump = { _app: 'WannNCR-GhostBackup', exportedAt: new Date().toISOString(), items: {} };
+    _ghostFound.forEach(g => { dump.items[g.key] = g.data; });
+    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'WannNCR-ghost-backup-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  } catch(e) {
+    showErrorToast('⚠️ ดาวน์โหลดสำเนาไม่สำเร็จ — ยกเลิกการลบเพื่อความปลอดภัย');
+    return;   // ไม่มีสำเนา = ไม่ลบ
+  }
+
+  // 2) ลบทีละรายการ
+  let ok = 0, fail = 0;
+  if (st) st.textContent = '⏳ กำลังลบ...';
+  for (const g of _ghostFound) {
+    try { await dbRef.supplierReplyRoot().child(g.key).remove(); ok++; }
+    catch(e) { console.warn('ลบผี ' + g.key + ':', e.message); fail++; }
+  }
+  _ghostFound = [];
+  const box = document.getElementById('ghost-result');
+  if (box) box.innerHTML = '';
+  if (st) st.textContent = '✅ ลบแล้ว ' + ok + ' รายการ' + (fail ? ' (ไม่สำเร็จ ' + fail + ')' : '') + ' — สำเนาอยู่ในโฟลเดอร์ดาวน์โหลด';
+  showAlert('✅ ล้างข้อมูลผีเรียบร้อย ' + ok + ' รายการ');
+}
+
 async function importBackup(file) {
   if (!file) return;
   const st = document.getElementById('backup-status');
@@ -3557,6 +3660,9 @@ async function deleteNCR(idx, expectId) {
   try {
     await dbRef.ncrItem(delId).remove();                    // ลบใบนี้ใบเดียวบน Firebase
     await dbRef.replyToken(delId).remove().catch(()=>{});   // ลบลิงก์ Supplier ที่ค้าง (Security)
+    // FIX-C1: ต้องลบคำตอบ Supplier ด้วย ไม่งั้นค้างเป็น "ข้อมูลผี"
+    // แล้วถูกดูดกลับเข้าใบใหม่ที่บังเอิญได้เลขที่เดิม
+    await dbRef.supplierReply(delId).remove().catch(()=>{});
   } catch(e) { alert('ลบไม่สำเร็จ: ' + e.message); }
   try { await saveData(); } catch(e) { console.warn('deleteNCR saveData:', e.message); }
   renderList();
