@@ -2724,20 +2724,33 @@ async function importBackup(file) {
 
 // ==================== VIEW/EDIT/DELETE ====================
 function viewNCR(idx) {
-  const n = ncrList[idx];
+  // เก็บของเดิมไว้ กันหน้าจอโกหกเวลาเขียนไม่สำเร็จ
+    const _bakNcr = ncrList, _bakSet = settings, _bakBp = BP_NAMES, _bakSig = signatures;
+    ncrList = b.ncrList;
+    if (b.settings)   settings   = b.settings;
+    if (b.bpNames)    BP_NAMES   = b.bpNames;
+    if (b.signatures) signatures = b.signatures;
+    _fullNCRWrite = true;
 
-  // Step completion checks
-  const step1Done = !!(n.bp && n.defectDetail);
-  const step2Done = !!(n.supplierReply || n.rootCause) && !n.returnRequested; // ส่งกลับให้แก้ = ขั้นตอน 2 ยังไม่จบ
-  const step3Done = !!(n.auditResult || n.auditorSignDate);
-  const step4Done = !!(n.closureAccept !== undefined || n.closureReject !== undefined || n.status === 'closed');
+    try {
+      await saveData();
+      // พิสูจน์ว่าเขียนขึ้น Firebase จริง — อ่านกลับมานับ (ด่านที่จะจับบั๊กแบบนี้ได้ในอนาคต)
+      const vSnap = await dbRef.ncrList().once('value');
+      const vCount = vSnap.exists() ? Object.keys(vSnap.val() || {}).length : 0;
+      if (vCount !== ncrList.length) {
+        throw new Error('เขียนขึ้นฐานข้อมูลได้ ' + vCount + ' ใบ จาก ' + ncrList.length + ' ใบ');
+      }
+    } catch(err) {
+      // คืนค่าเดิมทั้งหมด แล้วบอกความจริง
+      ncrList = _bakNcr; settings = _bakSet; BP_NAMES = _bakBp; signatures = _bakSig;
+      updateDashboard(); renderList(); renderSettings(); populateSelects();
+      if (st) st.textContent = '❌ กู้คืนไม่สำเร็จ — ข้อมูลเดิมยังอยู่ครบ';
+      showErrorToast('⚠️ กู้คืนไม่สำเร็จ: ' + (err.code || err.message));
+      return;
+    }
 
-  const stepStyle = (done, active) => `
-    display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:10px;margin-bottom:10px;
-    background:${done ? '#e8f5e9' : active ? '#fff8e1' : 'var(--surface2)'};
-    border:2px solid ${done ? '#4caf50' : active ? '#f59e0b' : 'var(--border)'};
-    cursor:pointer;transition:all .2s;
-  `;
+    // กู้คืนคำตอบ Supplier + ประวัติ (ทำต่อเมื่อ NCR เขียนสำเร็จแล้วเท่านั้น)
+    if (b.supplierReplies) { ...เหมือนเดิม... }
   const stepNum = (num, done) => `
     <div style="width:32px;height:32px;border-radius:50%;background:${done?'#4caf50':'#e0e0e0'};
     color:${done?'#fff':'#555'};display:flex;align-items:center;justify-content:center;
