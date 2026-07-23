@@ -1625,6 +1625,7 @@ window.onload = async function() {
         document.getElementById('auth-overlay').classList.remove('hidden');
         document.getElementById('nav-user-bar').style.display = 'none';
         try { await auth.signOut(); } catch (_) {}
+        resetLoginButton();
         return;
       }
       // ────────────────────────────────────────────────────────────
@@ -1649,12 +1650,24 @@ window.onload = async function() {
       document.getElementById('fb-loading').style.display = 'none';
       document.getElementById('auth-overlay').classList.remove('hidden');
       document.getElementById('nav-user-bar').style.display = 'none';
+      resetLoginButton();
     }
   });
 };
 
 // ==================== FIREBASE AUTH ====================
 function initAuthOverlay() {}
+
+// Bug fix (ปุ่มค้าง "กำลังเข้าสู่ระบบ..."): doLogin ปิดปุ่มไว้ตอนกด
+// แต่คืนสภาพเฉพาะตอน login ไม่ผ่าน พอ login สำเร็จแล้วออกจากระบบ
+// หน้า login กลับมาพร้อมปุ่มที่ยังปิดอยู่ → กดไม่ได้อีกเลย
+// จึงต้องคืนสภาพปุ่มทุกครั้งที่หน้า login ถูกแสดง
+function resetLoginButton() {
+  const btn = document.querySelector('.auth-submit');
+  if (btn) { btn.disabled = false; btn.textContent = '🔐 เข้าสู่ระบบ'; }
+  const pw = document.getElementById('auth-password');
+  if (pw) pw.value = '';
+}
 
 async function doLogin() {
   const email = document.getElementById('auth-email').value.trim();
@@ -1695,9 +1708,10 @@ async function doLogin() {
 }
 
 function doLogout() {
-  if (confirm('ออกจากระบบ?')) {
-    auth.signOut();
-  }
+  if (!confirm('ออกจากระบบ?')) return;
+  // โหลดหน้าใหม่หลังออกจากระบบ เพื่อล้างข้อมูลของคนเดิมออกจากหน่วยความจำให้หมด
+  // (รายการ NCR / สิทธิ์ / ตัวเฝ้าฟังข้อมูลของ Firebase) กันข้อมูลคนก่อนค้างให้คนถัดไปเห็น
+  auth.signOut().finally(() => location.reload());
 }
 
 function getToken() {
