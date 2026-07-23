@@ -750,7 +750,7 @@
     <div class="nav-tab active" onclick="showPage('dashboard')">📊 แดชบอร์ด</div>
     <div class="nav-tab" onclick="startNewNCR()">➕ ออก NCR ใหม่</div>
     <div class="nav-tab" onclick="showPage('ncr-list')">📋 รายการ NCR</div>
-    <div class="nav-tab" onclick="showPage('settings')">⚙️ ตั้งค่า</div>
+    <div class="nav-tab" id="nav-tab-settings" onclick="showPage('settings')">⚙️ ตั้งค่า</div>
   </div>
   <button class="btn btn-secondary" style="font-size:.8rem;padding:6px 14px;margin-right:8px" onclick="openExportModal()">📤 Export</button>
   <div style="position:relative">
@@ -1446,18 +1446,140 @@ const dbRef = {
   settings:      () => db.ref('ncr_system/settings'),
   ncrList:       () => db.ref('ncr_system/ncr_list'),
   ncrItem:       (id) => db.ref('ncr_system/ncr_list/' + id.replace(/\//g, '_')),
+  // เฟส 2: ก้อนแชร์ — เก็บเฉพาะฟิลด์ที่ Supplier ต้องเห็น + รูปภาพ (รูปอยู่ที่นี่ที่เดียว)
+  ncrShared:     () => db.ref('ncr_system/ncr_shared'),
+  ncrSharedItem: (id) => db.ref('ncr_system/ncr_shared/' + id.replace(/\//g, '_')),
   bpNames:       () => db.ref('ncr_system/bp_names'),
   supplierReply: (id) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_')),
   supplierReplyRoot: () => db.ref('ncr_system/supplier_reply'),   // FIX-C3: ใช้สแกนหาข้อมูลผี
   // ประวัติการตอบกลับ: เก็บใต้ supplier_reply เพื่อให้ Supplier เขียนได้ตาม Rules เดิม (สิทธิ์ครอบคลุมลูกทั้งหมด)
   supplierReplyHistory: (id, key) => db.ref('ncr_system/supplier_reply/' + id.replace(/\//g, '_') + '/history/' + key),
-  // รหัสลับประจำใบ (Reply Token): อ่านได้เฉพาะคน login — Rules ใช้ตรวจว่าลิงก์ตอบกลับเป็นของจริง
-  replyToken: (id) => db.ref('ncr_system/reply_tokens/' + id.replace(/\//g, '_')),
+  // เฟส 2: รหัสลับประจำใบย้ายมาอยู่ใน ncr_shared (เลิกใช้ node reply_tokens เดิม)
+  replyToken: (id) => db.ref('ncr_system/ncr_shared/' + id.replace(/\//g, '_') + '/replyToken'),
+  replyExpiry:(id) => db.ref('ncr_system/ncr_shared/' + id.replace(/\//g, '_') + '/expiresAt'),
   signatures:    () => db.ref('ncr_system/signatures'),
   // รายชื่อ email ผู้มีสิทธิ์อนุมัติ (mirror จาก settings.approverEmails) — Firebase Rules ใช้ node นี้ตรวจสิทธิ์
   approverEmails:() => db.ref('ncr_system/approver_emails'),
   companyLogo:   () => db.ref('ncr_system/company_logo'),
+  // เฟส 1 (กำแพงสมาชิก): ทะเบียนพนักงาน — อีเมล -> 'admin' | 'approver' | 'user'
+  roles:         () => db.ref('ncr_system/roles'),
+  myRole:        (email) => db.ref('ncr_system/roles/' + emailKey(email)),
 };
+
+// ==================== ROLE / สิทธิ์ (เฟส 1) ====================
+// Firebase ห้ามใช้จุด (.) ในชื่อ key จึงต้องแปลงเป็นลูกน้ำ (,) ให้ตรงกับที่ Rules ใช้
+function emailKey(email) { return String(email || '').toLowerCase().replace(/\./g, ','); }
+
+let currentRole = null;   // 'admin' | 'approver' | 'user' | null (= ไม่มีชื่อในทะเบียน)
+
+async function loadMyRole(user) {
+  currentRole = null;
+  if (!user || !user.email) return null;
+  try {
+    const snap = await dbRef.myRole(user.email).once('value');
+    const v = snap.exists() ? String(snap.val() || '').trim().toLowerCase() : '';
+    currentRole = (v === 'admin' || v === 'approver' || v === 'user') ? v : null;
+  } catch (e) {
+    console.warn('อ่านสิทธิ์ไม่สำเร็จ:', e.message);
+    currentRole = null;
+  }
+  return currentRole;
+}
+
+function isAdmin()    { return currentRole === 'admin'; }
+function isApprover() { return currentRole === 'admin' || currentRole === 'approver'; }
+
+// ซ่อน/แสดงเมนูตามสิทธิ์ — Rules ฝั่ง Firebase เป็นด่านจริง ตรงนี้แค่ไม่ให้กดแล้วเจอ error
+function applyRoleToUI() {
+  const st = document.getElementById('nav-tab-settings');
+  if (st) st.style.display = isAdmin() ? '' : 'none';
+  const badge = document.getElementById('nav-role-badge');
+  if (badge) {
+    const label = { admin: '🛡️ ผู้ดูแลระบบ', approver: '✅ ผู้อนุมัติ', user: '👤 ผู้ใช้งาน' };
+    badge.textContent = label[currentRole] || '';
+  }
+}
+
+// ==================== เฟส 2: แยกก้อนข้อมูล ====================
+// ฟิลด์ที่ Supplier มองเห็นได้ — นอกเหนือจากนี้อยู่ใน ncr_list เท่านั้น คนนอกแตะไม่ถึง
+const SHARED_FIELDS = ['id','date','bp','dept','subject','productCode','defectDetail',
+                       'status','returnRequested','returnReason','updatedAt'];
+
+const REPLY_LINK_DAYS = 30;   // อายุลิงก์ตอบกลับ (วัน)
+
+// ก้อนภายใน = ทุกฟิลด์ ยกเว้นรูป (รูปอยู่ก้อนแชร์ที่เดียว ไม่เก็บซ้ำ)
+function buildInternal(ncr) {
+  const o = Object.assign({}, ncr);
+  delete o.images;        // รูปอยู่ก้อนแชร์ที่เดียว
+  delete o.replyToken;    // ข้อมูลลิงก์อยู่ก้อนแชร์ที่เดียว
+  delete o.expiresAt;     // ถ้าเก็บซ้ำ ลิงก์ที่ถูกปิดไปแล้วจะถูกเขียนกลับมาโดยไม่ตั้งใจ
+  return o;
+}
+
+// ก้อนแชร์ = เฉพาะฟิลด์ในรายการข้างบน + รูป + ข้อมูลลิงก์
+function buildShared(ncr) {
+  const s = {};
+  SHARED_FIELDS.forEach(f => {
+    if (ncr[f] !== undefined && ncr[f] !== null) s[f] = ncr[f];
+  });
+  s.images = Array.isArray(ncr.images) ? ncr.images.filter(Boolean) : [];
+  if (ncr.replyToken) s.replyToken = ncr.replyToken;
+  if (ncr.expiresAt)  s.expiresAt  = ncr.expiresAt;
+  return s;
+}
+
+// ── โหลดรูปเฉพาะตอนต้องใช้ (ก2) ─────────────────────────────
+// ตอน login ระบบดึงมาแค่ข้อความ ทำให้เปิดแอปเร็วคงที่ไม่ว่าจะมีกี่ใบ
+const _imgLoaded = new Set();
+
+async function ensureImages(ncr) {
+  if (!ncr || !ncr.id) return [];
+  if (_imgLoaded.has(ncr.id)) return ncr.images || [];
+  try {
+    const snap = await dbRef.ncrSharedItem(ncr.id).child('images').once('value');
+    const v = snap.exists() ? snap.val() : [];
+    ncr.images = Array.isArray(v) ? v.filter(Boolean) : Object.values(v || {}).filter(Boolean);
+  } catch (e) {
+    console.warn('โหลดรูปของ ' + ncr.id + ' ไม่สำเร็จ:', e.message);
+    ncr.images = ncr.images || [];
+  }
+  _imgLoaded.add(ncr.id);
+  return ncr.images;
+}
+
+// เรียกตอนบันทึก/ลบ เพื่อไม่ให้แคชค้างเป็นรูปเก่า
+function invalidateImages(id) { if (id) _imgLoaded.delete(id); }
+
+// สร้างรหัสลับ + วันหมดอายุชุดใหม่ให้ใบหนึ่ง (ผู้อนุมัติเท่านั้น — Rules บังคับอีกชั้น)
+async function issueReplyLink(ncr) {
+  const tok = generateReplyToken();
+  const exp = Date.now() + REPLY_LINK_DAYS * 86400000;
+  await dbRef.ncrSharedItem(ncr.id).update({ replyToken: tok, expiresAt: exp });
+  ncr.replyToken = tok;
+  ncr.expiresAt  = exp;
+  return tok;
+}
+
+// เก็บกวาดลิงก์ที่หมดอายุ — ทำตอนมีพนักงาน login (ระบบไม่มีเซิร์ฟเวอร์คอยเดินตรวจ)
+async function sweepExpiredLinks() {
+  try {
+    const snap = await dbRef.ncrShared().once('value');
+    if (!snap.exists()) return;
+    const all = snap.val() || {};
+    const now = Date.now();
+    for (const k of Object.keys(all)) {
+      const s = all[k];
+      if (!s || !s.replyToken) continue;
+      const dead = (s.expiresAt && now > s.expiresAt) || s.status === 'closed';
+      if (!dead) continue;
+      try {
+        await db.ref('ncr_system/ncr_shared/' + k).update({ replyToken: null, expiresAt: null });
+        const n = ncrList.find(x => x && x.id && x.id.replace(/\//g,'_') === k);
+        if (n) { delete n.replyToken; delete n.expiresAt; }
+      } catch (e) { console.warn('ปิดลิงก์หมดอายุ ' + k + ' ไม่สำเร็จ:', e.message); }
+    }
+  } catch (e) { console.warn('เก็บกวาดลิงก์หมดอายุข้าม:', e.message); }
+}
 
 // ==================== INIT ====================
 // FIX-A4: ตั้งแต่ saveData() โยน error ต่อได้ ต้องมีตัวดักไว้ท้ายสุด
@@ -1488,10 +1610,31 @@ window.onload = async function() {
   // ตรวจสอบ Auth state
   auth.onAuthStateChanged(async (user) => {
     if (user) {
+      // ── เฟส 1: กำแพงสมาชิก ──────────────────────────────────────
+      // login สำเร็จยังไม่พอ ต้องมีชื่ออยู่ใน ncr_system/roles ด้วย
+      // (กันกรณีมีคนสมัครบัญชีเองจากภายนอกแล้วเข้ามาอ่านข้อมูล)
+      await loadMyRole(user);
+      if (!currentRole) {
+        document.getElementById('fb-loading').style.display = 'none';
+        const _e = document.getElementById('auth-error');
+        if (_e) {
+          _e.innerHTML = '⛔ บัญชีนี้ยังไม่ได้ลงทะเบียนในระบบ<br>'
+                       + '<span style="font-size:.85em">กรุณาติดต่อผู้ดูแลระบบเพื่อเพิ่มชื่อของคุณ</span>';
+          _e.style.color = '#f44336';
+        }
+        document.getElementById('auth-overlay').classList.remove('hidden');
+        document.getElementById('nav-user-bar').style.display = 'none';
+        try { await auth.signOut(); } catch (_) {}
+        return;
+      }
+      // ────────────────────────────────────────────────────────────
+
       // Login สำเร็จ → โหลดข้อมูล
       document.getElementById('auth-overlay').classList.add('hidden');
       document.getElementById('nav-user-bar').style.display = 'flex';
-      document.getElementById('nav-user-email').textContent = '👤 ' + user.email;
+      const _roleLabel = { admin: 'ผู้ดูแลระบบ', approver: 'ผู้อนุมัติ', user: 'ผู้ใช้งาน' }[currentRole] || '';
+      document.getElementById('nav-user-email').textContent = '👤 ' + user.email + ' · ' + _roleLabel;
+      applyRoleToUI();
       await loadData();
       setupAutocomplete('bp-input', 'bp-list', BP_NAMES, v => v, 200);
       setupProductAutocomplete();
@@ -1500,6 +1643,7 @@ window.onload = async function() {
       // Real-time listener สำหรับ NCR list
       listenForChanges();
       document.getElementById('fb-loading').style.display = 'none';
+      sweepExpiredLinks();   // เฟส 3: ปิดลิงก์ที่หมดอายุ/ใบที่ปิดแล้ว (ทำเงียบๆ เบื้องหลัง)
     } else {
       // ยังไม่ login → แสดงหน้า login
       document.getElementById('fb-loading').style.display = 'none';
@@ -1584,23 +1728,7 @@ async function loadData() {
       ncrList = ncrList.filter(x => x !== null && x !== undefined);
     }
 
-    // Backfill (ทำครั้งเดียวต่อใบ): ใบเก่าที่มี token ใน reply_tokens แต่ยังไม่มี replyToken ในตัวใบ
-    // จำเป็นสำหรับ Rules แบบ query-based read — ไม่งั้นลิงก์เก่าที่ส่ง Supplier ไปแล้วจะเปิดไม่ได้
-    try {
-      const allTokSnap = await db.ref('ncr_system/reply_tokens').once('value');
-      if (allTokSnap.exists()) {
-        const toks = allTokSnap.val() || {};
-        for (const ncr of ncrList) {
-          if (!ncr || !ncr.id || ncr.replyToken) continue;
-          const k = ncr.id.replace(/\//g, '_');
-          if (toks[k]) {
-            ncr.replyToken = toks[k];
-            try { await dbRef.ncrItem(ncr.id).update({ replyToken: toks[k] }); }
-            catch(be) { console.warn('backfill replyToken ' + ncr.id + ':', be.message); }
-          }
-        }
-      }
-    } catch(e) { console.warn('backfill replyToken skipped:', e.message); }
+    // (เฟส 2: ตัดโค้ด backfill ของ node reply_tokens เดิมออก — ย้ายไปอยู่ใน ncr_shared แล้ว)
 
     // โหลด BP Names (Suppliers)
     const bSnap = await dbRef.bpNames().once('value');
@@ -1624,6 +1752,13 @@ async function loadData() {
       companyLogo = logoSnap.val();
     }
     updateLogoDisplay();
+
+    // เฟส 1: จด "สภาพเดิม" ของข้อมูลตั้งค่าไว้เทียบตอนบันทึก
+    // เพื่อไม่ให้ saveData() เขียนทับ settings/bp_names/signatures ทุกครั้งโดยไม่จำเป็น
+    // (จำเป็นมาก เพราะ Rules ใหม่ล็อกให้เฉพาะ Admin เขียน 3 ก้อนนี้ได้)
+    _snapSettings = JSON.stringify(settings);
+    _snapBP       = JSON.stringify(BP_NAMES);
+    _snapSig      = JSON.stringify(signatures);
 
     // Merge supplier replies เข้า ncrList (อ่านทีละรายการเพื่อไม่ติด Firebase Rules)
     // Bug fix (ข้อมูล Supplier ไม่ถึงต้นทาง): เดิมเช็คเฉพาะ NCR สถานะ waiting-audit/closed
@@ -1687,47 +1822,85 @@ const _dirtyNCRs = new Set();
 let _fullNCRWrite = false; // ใช้เฉพาะ Import Excel / กู้คืน Backup ที่ต้องเขียนทั้งก้อนจริงๆ
 function markNCRDirty(id) { if (id) _dirtyNCRs.add(id); }
 
+// เฟส 1: สภาพเดิมของ settings / BP_NAMES / signatures ตอนโหลดล่าสุด
+let _snapSettings = null, _snapBP = null, _snapSig = null;
+
 async function saveData() {
   // บันทึกทุกอย่างขึ้น Firebase
   try {
-    await dbRef.settings().set(settings);
+    // เขียน settings เฉพาะเมื่อ "เปลี่ยนจริง" เท่านั้น
+    const _curSettings = JSON.stringify(settings);
+    if (_curSettings !== _snapSettings) {
+      await dbRef.settings().set(settings);
+      _snapSettings = _curSettings;
+    }
 
     if (_fullNCRWrite) {
-      // โหมดเขียนทั้งก้อน (Import/Restore เท่านั้น)
-      const ncrObj = {};
+      // โหมดเขียนทั้งก้อน (Import/Restore เท่านั้น — Admin)
+      const listObj = {}, sharedObj = {};
       ncrList.forEach(n => {
-        if (n && n.id) ncrObj[n.id.replace(/\//g, '_')] = n;
+        if (n && n.id) {
+          const k = n.id.replace(/\//g, '_');
+          listObj[k]   = buildInternal(n);
+          sharedObj[k] = buildShared(n);
+        }
       });
-      await dbRef.ncrList().set(ncrObj);
+      await db.ref().update({
+        'ncr_system/ncr_list':   listObj,
+        'ncr_system/ncr_shared': sharedObj
+      });
       _dirtyNCRs.clear();
     } else if (_dirtyNCRs.size > 0) {
-      // โหมดปกติ: เขียนเฉพาะใบที่ถูกแก้ (multi-path update — atomic)
+      // โหมดปกติ: เขียนเฉพาะใบที่ถูกแก้ — ทั้ง 2 ก้อนไปพร้อมกันในคำสั่งเดียว
+      // (ถ้าก้อนใดก้อนหนึ่งเขียนไม่ผ่าน จะไม่มีก้อนไหนถูกเขียนเลย ข้อมูลไม่มีทางเพี้ยนคนละทาง)
       const patch = {};
       _dirtyNCRs.forEach(id => {
         const n = ncrList.find(x => x && x.id === id);
-        if (n) patch[id.replace(/\//g, '_')] = n;
+        if (!n) return;
+        const k = id.replace(/\//g, '_');
+        patch['ncr_system/ncr_list/' + k] = buildInternal(n);
+        // ก้อนแชร์: เขียนทีละฟิลด์ ไม่เขียนทับทั้งก้อน
+        // เพราะ replyToken / expiresAt / images ไม่ได้อยู่ในหน่วยความจำเสมอไป
+        // ถ้าเขียนทับทั้งก้อนจะทำให้ลิงก์กับรูปหายโดยไม่ตั้งใจ
+        SHARED_FIELDS.forEach(f => {
+          patch['ncr_system/ncr_shared/' + k + '/' + f] = (n[f] === undefined ? null : n[f]);
+        });
+        // รูปเขียนเฉพาะตอนที่มีอยู่ในหน่วยความจำจริง (เพิ่งอัปโหลด หรือเพิ่งเปิดแก้ไข)
+        if (Array.isArray(n.images)) {
+          patch['ncr_system/ncr_shared/' + k + '/images'] = n.images.filter(Boolean);
+          _imgLoaded.add(id);
+        }
       });
-      if (Object.keys(patch).length) await dbRef.ncrList().update(patch);
+      if (Object.keys(patch).length) await db.ref().update(patch);
       // ข้อ 5: token lifecycle — ใบที่ปิดแล้ว ลิงก์ Supplier ต้องตายทันที
       for (const id of _dirtyNCRs) {
         const n = ncrList.find(x => x && x.id === id);
         if (n && n.status === 'closed') {
-          try { await dbRef.replyToken(id).remove(); } catch(e) { console.warn('ลบ token ใบปิดไม่สำเร็จ:', e.message); }
-          // ลบ replyToken ในตัวใบด้วย — ลิงก์เก่าจะอ่านใบไม่ได้อีก (ตายสนิทตามหลัก token lifecycle)
-          try { await dbRef.ncrItem(id).update({ replyToken: null }); delete n.replyToken; } catch(e) { console.warn('ลบ replyToken ในใบปิดไม่สำเร็จ:', e.message); }
+          try {
+            await dbRef.ncrSharedItem(id).update({ replyToken: null, expiresAt: null });
+            delete n.replyToken; delete n.expiresAt;
+          } catch(e) { console.warn('ปิดลิงก์ของใบที่ปิดแล้วไม่สำเร็จ:', e.message); }
         }
       }
       _dirtyNCRs.clear();
     }
     // ถ้าไม่มีใบ dirty เลย = บันทึกเฉพาะ settings (เช่น เพิ่มรายชื่อ) — ไม่แตะ NCR ใดๆ ทั้งสิ้น
 
-    // บันทึก BP Names
-    await dbRef.bpNames().set(BP_NAMES);
+    // บันทึก BP Names (เฉพาะเมื่อเปลี่ยนจริง)
+    const _curBP = JSON.stringify(BP_NAMES);
+    if (_curBP !== _snapBP) {
+      await dbRef.bpNames().set(BP_NAMES);
+      _snapBP = _curBP;
+    }
 
-    // บันทึก signatures
-    const sigStore = {};
-    Object.keys(signatures).forEach(k => { sigStore[k.replace(/ /g,'_SIG_')] = signatures[k]; });
-    await dbRef.signatures().set(sigStore);
+    // บันทึก signatures (เฉพาะเมื่อเปลี่ยนจริง)
+    const _curSig = JSON.stringify(signatures);
+    if (_curSig !== _snapSig) {
+      const sigStore = {};
+      Object.keys(signatures).forEach(k => { sigStore[k.replace(/ /g,'_SIG_')] = signatures[k]; });
+      await dbRef.signatures().set(sigStore);
+      _snapSig = _curSig;
+    }
   } catch(e) {
     console.error('saveData (Firebase) error:', e);
     alert('บันทึกข้อมูลไม่สำเร็จ: ' + e.message);
@@ -1794,28 +1967,26 @@ function loadNcrForSupplier(ncrId) {
 }
 
 // Async version สำหรับ supplier reply mode
-// Security (query-based read): อ่านใบผ่าน query ที่กรองด้วย replyToken — Rules ใหม่อนุญาตเฉพาะ query แบบนี้
-// คนไม่มี token ที่ถูกต้องจะอ่านข้อมูลใบไม่ได้เลย (ปิดช่องเดาเลข NCR แล้วดึงข้อมูล)
+// เฟส 2: อ่านจาก ncr_shared เท่านั้น — ก้อนนี้มีเฉพาะฟิลด์ที่ Supplier ควรเห็น
+// ข้อมูลภายใน (หมายเหตุ ผลตรวจ ชื่อพนักงาน ประวัติอนุมัติ) อยู่ใน ncr_list ซึ่งคนนอกอ่านไม่ได้เลย
 async function loadNcrForSupplierAsync(ncrId) {
   const _tok = new URLSearchParams(window.location.search).get('token');
-  if (_tok) {
-    try {
-      const qSnap = await db.ref('ncr_system/ncr_list').orderByChild('replyToken').equalTo(_tok).once('value');
-      if (qSnap.exists()) {
-        const vals = Object.values(qSnap.val() || {}).filter(x => x);
-        // ยืนยันว่าใบที่ได้ตรงกับเลขในลิงก์ (กัน token สลับใบ)
-        const hit = vals.find(x => x.id === ncrId) || vals[0];
-        if (hit) return hit;
-      }
-    } catch(qe) { console.warn('query-based read ไม่สำเร็จ (อาจยังใช้ Rules ชุดเก่า) — ลองอ่านตรง:', qe.message); }
-  }
-  // ทางเดิม: อ่านตรงตาม id — ใช้ได้กรณี login แล้ว หรือ Rules ยังเป็นชุดเก่า (.read: true)
+  if (!_tok) return null;
   try {
-    const snap = await dbRef.ncrItem(ncrId).once('value');
-    return snap.exists() ? snap.val() : null;
-  } catch(e) {
-    console.error('loadNcrForSupplierAsync error:', e);
+    const qSnap = await db.ref('ncr_system/ncr_shared').orderByChild('replyToken').equalTo(_tok).once('value');
+    if (qSnap.exists()) {
+      const vals = Object.values(qSnap.val() || {}).filter(x => x);
+      // ยืนยันว่าใบที่ได้ตรงกับเลขในลิงก์ (กัน token สลับใบ)
+      const hit = vals.find(x => x.id === ncrId) || vals[0];
+      if (hit) {
+        if (hit.images && !Array.isArray(hit.images)) hit.images = Object.values(hit.images).filter(Boolean);
+        return hit;
+      }
+    }
     return null;
+  } catch(qe) {
+    console.warn('อ่านใบสำหรับ Supplier ไม่สำเร็จ:', qe.message);
+    return { __permissionDenied: true };
   }
 }
 
@@ -2454,13 +2625,14 @@ async function saveNCR() {
   // Approval Gate: ใบที่รออนุมัติ "ยังไม่สร้าง token" — token จะถูกสร้างตอนผู้ทบทวนกดอนุมัติ
   // (ไม่มี token = Firebase Rules ปฏิเสธการตอบกลับ → Supplier ตอบก่อนอนุมัติไม่ได้จริงในระดับ database)
   if (_isNewRecord && ncr.status !== 'pending-approval') {
-    try {
-      const tok = generateReplyToken();
-      await dbRef.replyToken(ncr.id).set(tok);
-      // Query-based read: เก็บ token ในตัวใบด้วย (บันทึกหลัง saveData แล้ว จึงเขียนตรงขึ้น Firebase)
-      ncr.replyToken = tok;
-      await dbRef.ncrItem(ncr.id).update({ replyToken: tok });
-    } catch(e) { console.warn('สร้าง reply token ไม่สำเร็จ (ลิงก์ยังใช้ได้แบบไม่มี token):', e.message); }
+    if (isApprover()) {
+      try {
+        await issueReplyLink(ncr);
+      } catch(e) { console.warn('ออกลิงก์ Supplier ไม่สำเร็จ:', e.message); }
+    } else {
+      // เฟส 3: ผู้ใช้ทั่วไปออกลิงก์เองไม่ได้ (Rules บังคับอีกชั้น) — ต้องรอผู้อนุมัติ
+      showAlert('ℹ️ บันทึกแล้ว — ลิงก์สำหรับ Supplier ต้องให้ผู้อนุมัติเป็นคนออกให้');
+    }
   }
   return true; // Bug fix: ยืนยันว่าบันทึกสำเร็จจริง (QR wrapper ใช้เช็ก)
 }
@@ -2615,7 +2787,8 @@ function updateOverdueBanner() {
 
   // 1) เลยกำหนดตรวจติดตาม: มี auditDueDate < วันนี้ และยังไม่ปิด
   const overdueAudit = ncrList.filter(n => {
-    if (!n || n.status === 'closed') return false;
+    // FIX-B6: ใบที่ยังรออนุมัติ/เพิ่งเปิด ยังไม่เคยส่งให้ Supplier — เตือน "เลยกำหนดตรวจติดตาม" ไม่ได้
+    if (!n || n.status === 'closed' || n.status === 'pending-approval' || n.status === 'open') return false;
     const due = parseAnyDate(n.auditDueDate);
     return due && due < today;
   });
@@ -2767,8 +2940,7 @@ async function scanGhostReplies() {
   _ghostFound = [];
   try {
     const snap = await dbRef.supplierReplyRoot().once('value');
-    if (!snap.exists()) { if (st) st.textContent = '✅ ไม่มีข้อมูลใน supplier_reply เลย'; return; }
-    const all = snap.val() || {};
+    const all = snap.exists() ? (snap.val() || {}) : {};
     // แปลง id ของใบที่มีอยู่จริงเป็นชื่อ node แบบเดียวกัน (ไปทางเดียว ปลอดภัยกว่าแปลงกลับ)
     const liveByKey = {};
     ncrList.forEach(n => { if (n && n.id) liveByKey[n.id.replace(/\//g, '_')] = n; });
@@ -2785,8 +2957,21 @@ async function scanGhostReplies() {
       }
     });
 
+    // FIX-C5: ตัวตรวจที่ 2 — หา "ใบปนเปื้อน" โดยไม่ต้องพึ่ง supplier_reply
+    // เหตุผล: ใบที่ยังรออนุมัติ/เพิ่งเปิด ยังไม่เคยมีลิงก์ส่งให้ Supplier เลย
+    // จึงเป็นไปไม่ได้ที่จะมีคำตอบ Supplier อยู่ในใบ — ถ้ามี = ของแปลกปลอมแน่นอน
+    ncrList.forEach(n => {
+      if (!n || !n.id) return;
+      if (n.status !== 'pending-approval' && n.status !== 'open') return;
+      const k = n.id.replace(/\//g, '_');
+      if (_ghostFound.some(g => g.key === k)) return;   // จับไปแล้วจากตัวตรวจที่ 1
+      const dirty = _MERGED_FIELDS.filter(f => n[f] !== undefined && n[f] !== null && n[f] !== '');
+      if (dirty.length) _ghostFound.push({ key: k, data: {}, kind: 'dirty', ncr: n, fields: dirty });
+    });
+
     if (!_ghostFound.length) {
-      if (st) st.textContent = '✅ สะอาด — คำตอบทุกรายการมีใบ NCR คู่กันครบ (' + Object.keys(all).length + ' รายการ)';
+      if (st) st.textContent = '✅ สะอาด — ตรวจคำตอบ ' + Object.keys(all).length + ' รายการ และใบ NCR '
+        + ncrList.length + ' ใบ ไม่พบข้อมูลแปลกปลอม';
       return;
     }
     const nStale = _ghostFound.filter(g => g.kind === 'stale').length;
@@ -2798,19 +2983,25 @@ async function scanGhostReplies() {
         _ghostFound.map(g => {
           const d = g.data || {};
           const when = d.updatedAt ? new Date(d.updatedAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '-';
-          const isStale = g.kind === 'stale';
+          const isStale = (g.kind === 'stale' || g.kind === 'dirty');
+          const isDirty = g.kind === 'dirty';
           const born = (isStale && g.ncr && g.ncr.createdAt)
             ? new Date(g.ncr.createdAt).toLocaleString('th-TH', {dateStyle:'medium', timeStyle:'short'}) : '';
           return '<div style="background:var(--surface2);border-left:3px solid ' + (isStale ? 'var(--danger)' : 'var(--warning)')
             + ';border-radius:6px;padding:10px 12px;margin-bottom:8px;font-size:.82rem">'
             + '<div style="font-family:monospace;font-weight:700">' + escapeHTML(g.key.replace(/_/g, '/'))
             + ' <span style="font-family:inherit;font-size:.75rem;padding:1px 6px;border-radius:4px;background:'
-            + (isStale ? 'rgba(229,57,53,.15);color:#e53935">🔴 เลขซ้ำ — ปนเปื้อนใบจริงแล้ว' : 'rgba(255,152,0,.15);color:#ff9800">🟠 ไม่มีใบคู่กัน')
+            + (isDirty ? 'rgba(229,57,53,.15);color:#e53935">🔴 ใบปนเปื้อน — มีคำตอบ Supplier ทั้งที่ยังไม่เคยส่งลิงก์'
+               : isStale ? 'rgba(229,57,53,.15);color:#e53935">🔴 เลขซ้ำ — ปนเปื้อนใบจริงแล้ว'
+               : 'rgba(255,152,0,.15);color:#ff9800">🟠 ไม่มีใบคู่กัน')
             + '</span></div>'
             + '<div style="color:var(--text-muted);margin-top:4px">คำตอบบันทึกเมื่อ: ' + escapeHTML(when)
             + (born ? ' &nbsp;|&nbsp; ใบปัจจุบันสร้างเมื่อ: ' + escapeHTML(born) : '') + '</div>'
-            + '<div style="margin-top:4px">ผู้ตอบ: <b>' + escapeHTML(d.supplierPerson || '-') + '</b>'
-            + ' &nbsp;|&nbsp; คำตอบ: ' + escapeHTML(String(d.supplierReply || '-').substring(0, 60)) + '</div>'
+            + (isDirty
+                ? '<div style="margin-top:4px">สถานะใบ: <b>' + escapeHTML(g.ncr.status || '-') + '</b>'
+                  + ' &nbsp;|&nbsp; ฟิลด์ที่ปนเปื้อน (' + g.fields.length + '): ' + escapeHTML(g.fields.join(', ')) + '</div>'
+                : '<div style="margin-top:4px">ผู้ตอบ: <b>' + escapeHTML(d.supplierPerson || '-') + '</b>'
+                  + ' &nbsp;|&nbsp; คำตอบ: ' + escapeHTML(String(d.supplierReply || '-').substring(0, 60)) + '</div>')
             + (isStale ? '<div style="margin-top:8px"><button class="btn btn-warning btn-xs" onclick="cleanStaleNcr(\'' + g.key + '\')">🧼 ล้างข้อมูลปนเปื้อนออกจากใบนี้</button></div>' : '')
             + '</div>';
         }).join('')
@@ -2831,7 +3022,7 @@ const _MERGED_FIELDS = ['supplierReply','supplierCA','supplierPreventive','suppl
                         'auditDueDate','fixAcknowledgeDate'];
 
 async function cleanStaleNcr(key) {
-  const g = _ghostFound.find(x => x.key === key && x.kind === 'stale');
+  const g = _ghostFound.find(x => x.key === key && (x.kind === 'stale' || x.kind === 'dirty'));
   if (!g) return;
   const idx = ncrList.findIndex(n => n && n.id && n.id.replace(/\//g, '_') === key);
   if (idx < 0) { showErrorToast('⚠️ ไม่พบใบ NCR นี้แล้ว'); return; }
@@ -2860,8 +3051,10 @@ async function cleanStaleNcr(key) {
 }
 
 async function deleteGhostReplies() {
-  if (!_ghostFound.length) return;
-  const names = _ghostFound.map(g => g.key.replace(/_/g, '/')).join('\n• ');
+  // ชนิด 'dirty' ไม่มี node ใน supplier_reply ให้ลบ (ต้องใช้ปุ่ม 🧼 แทน)
+  const targets = _ghostFound.filter(g => g.kind !== 'dirty');
+  if (!targets.length) { showAlert('ไม่มีคำตอบใน supplier_reply ให้ลบ — ใช้ปุ่ม 🧼 ล้างใบปนเปื้อนแทนครับ'); return; }
+  const names = targets.map(g => g.key.replace(/_/g, '/')).join('\n• ');
   if (!confirm('ระบบจะดาวน์โหลดสำเนาเก็บไว้ก่อน แล้วจึงลบรายการเหล่านี้:\n\n• ' + names
     + '\n\nยืนยันหรือไม่?')) return;
 
@@ -2869,7 +3062,7 @@ async function deleteGhostReplies() {
   // 1) ดาวน์โหลดสำเนาก่อนเสมอ — ลบแล้วกู้คืนไม่ได้
   try {
     const dump = { _app: 'WannNCR-GhostBackup', exportedAt: new Date().toISOString(), items: {} };
-    _ghostFound.forEach(g => { dump.items[g.key] = g.data; });
+    targets.forEach(g => { dump.items[g.key] = g.data; });
     const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -2884,7 +3077,7 @@ async function deleteGhostReplies() {
   // 2) ลบทีละรายการ
   let ok = 0, fail = 0;
   if (st) st.textContent = '⏳ กำลังลบ...';
-  for (const g of _ghostFound) {
+  for (const g of targets) {
     try { await dbRef.supplierReplyRoot().child(g.key).remove(); ok++; }
     catch(e) { console.warn('ลบผี ' + g.key + ':', e.message); fail++; }
   }
@@ -2979,10 +3172,11 @@ function findIdx(idx, expectId) {
   return idx;
 }
 
-function viewNCR(idx, expectId) {
+async function viewNCR(idx, expectId) {
   const n = ncrList[expectId ? findIdx(idx, expectId) : idxOf(idx)];   // FIX-B4
   if (!n) { showErrorToast('⚠️ ไม่พบรายการนี้แล้ว (อาจถูกลบไปก่อน)'); renderList(); return; }
   _viewingNcrId = n.id || null;
+  await ensureImages(n);   // เฟส 2 (ก2): รูปโหลดตอนเปิดดูใบเท่านั้น
 
   // Step completion checks
   const step1Done = !!(n.bp && n.defectDetail);
@@ -3423,18 +3617,16 @@ async function approveNCRDoc(idx) {
   if (!Array.isArray(n.approvalHistory)) n.approvalHistory = [];
   n.approvalHistory.push({ _event: 'approved', _at: now, by: reviewerName, email: n.approvedByEmail });
 
-  // Security: สร้าง reply token "ตอนอนุมัติ" (ถ้ายังไม่มี) — ก่อนหน้านี้ลิงก์ใช้ไม่ได้จริงเพราะไม่มี token
+  // Security: ออกลิงก์ Supplier ตอนอนุมัติ (ถ้ายังไม่มี) พร้อมตั้งอายุ 30 วัน
   try {
     const tokSnap = await dbRef.replyToken(n.id).once('value');
-    let _tok = (tokSnap.exists() && tokSnap.val()) ? tokSnap.val() : null;
-    if (!_tok) {
-      _tok = generateReplyToken();
-      await dbRef.replyToken(n.id).set(_tok);
-      n.replyTokenCreatedAt = now; // ข้อ 5: ใช้ตรวจอายุลิงก์ (90 วัน)
+    if (!(tokSnap.exists() && tokSnap.val())) {
+      await issueReplyLink(n);
+      n.replyTokenCreatedAt = now;
+    } else {
+      n.replyToken = tokSnap.val();
     }
-    // Query-based read: เก็บ token ไว้ในตัวใบด้วย — Supplier อ่านใบผ่าน query ที่ต้องรู้ token นี้
-    n.replyToken = _tok;
-  } catch(e) { console.warn('สร้าง reply token ตอนอนุมัติไม่สำเร็จ:', e.message); }
+  } catch(e) { console.warn('ออกลิงก์ตอนอนุมัติไม่สำเร็จ:', e.message); }
 
   markNCRDirty(n.id); await saveData(); updateDashboard(); renderList();
   sendNotify('✅ [WannNCR] อนุมัติแล้ว: ' + n.id + ' โดย ' + reviewerName + ' — พร้อมส่งลิงก์ให้ Supplier');
@@ -3650,7 +3842,7 @@ async function quickStatus(idx, status) {
   viewNCR(idx);
 }
 
-function editNCR(idx, expectId) {
+async function editNCR(idx, expectId) {
   // FIX-B4: ยึด id เป็นหลัก ถ้าเรียกจากโมดัลก็ใช้ _viewingNcrId ที่จดไว้
   const real = expectId ? findIdx(idx, expectId) : idxOf(idx);
   const n = ncrList[real];
@@ -3698,8 +3890,10 @@ function editNCR(idx, expectId) {
     setVal('remark', n.remark);
     setVal('ref-doc', n.refDoc);
     setVal('nc-name', n.ncName);
-    uploadedImages = n.images ? [...n.images] : [];
-    renderImageGrid();
+    ensureImages(n).then(() => {   // เฟส 2 (ก2): ดึงรูปเข้าฟอร์มแก้ไข
+      uploadedImages = n.images ? [...n.images] : [];
+      renderImageGrid();
+    });
     // Bug #10 fix: อัปเดต label "เรียน" ตามประเภทเอกสาร
     updateBpLabel();
     // Bug #9 fix: filter subject ตาม nc-type ที่โหลดมา แล้ว restore ค่า
@@ -3717,8 +3911,9 @@ async function deleteNCR(idx, expectId) {
   const delId = n.id;
   ncrList.splice(real, 1);
   try {
-    await dbRef.ncrItem(delId).remove();                    // ลบใบนี้ใบเดียวบน Firebase
-    await dbRef.replyToken(delId).remove().catch(()=>{});   // ลบลิงก์ Supplier ที่ค้าง (Security)
+    await dbRef.ncrItem(delId).remove();                       // ลบก้อนภายใน
+    await dbRef.ncrSharedItem(delId).remove().catch(()=>{});   // ลบก้อนแชร์ (รูป+ลิงก์ตายไปด้วย)
+    invalidateImages(delId);
     // FIX-C1: ต้องลบคำตอบ Supplier ด้วย ไม่งั้นค้างเป็น "ข้อมูลผี"
     // แล้วถูกดูดกลับเข้าใบใหม่ที่บังเอิญได้เลขที่เดิม
     await dbRef.supplierReply(delId).remove().catch(()=>{});
@@ -3734,16 +3929,19 @@ function previewNCR() {
   openPrintModal(n);
 }
 
-function openPrint(idx, expectId) {
+async function openPrint(idx, expectId) {
   // FIX-B4: ยึด id เป็นหลัก (จากตาราง) หรือ _viewingNcrId (จากโมดัล)
   const ncrData = ncrList[expectId ? findIdx(idx, expectId) : idxOf(idx)];
   if (!ncrData) { showErrorToast('⚠️ ไม่พบรายการนี้แล้ว'); return; }
+  await ensureImages(ncrData);   // เฟส 2 (ก2): ดึงรูปก่อนสร้างใบพิมพ์
   openPrintModal(ncrData);
 }
 
-function openPrintById(ncrId) {
+async function openPrintById(ncrId) {
   const ncrData = ncrList.find(n => n.id === ncrId);
-  if (ncrData) openPrintModal(ncrData);
+  if (!ncrData) return;
+  await ensureImages(ncrData);
+  openPrintModal(ncrData);
 }
 
 function buildCurrentNCR() {
@@ -4458,6 +4656,12 @@ function exportCSV() {
 
 // ==================== UI HELPERS ====================
 function showPage(name) {
+  // เฟส 1: หน้าตั้งค่าเปิดได้เฉพาะผู้ดูแลระบบ (Rules ฝั่ง Firebase เป็นด่านจริงอีกชั้น)
+  if (name === 'settings' && currentRole && !isAdmin()) {
+    if (typeof showErrorToast === 'function') showErrorToast('🔒 หน้าตั้งค่าเปิดได้เฉพาะผู้ดูแลระบบ');
+    else alert('หน้าตั้งค่าเปิดได้เฉพาะผู้ดูแลระบบ');
+    return;
+  }
   const targetPage = document.getElementById('page-'+name);
   if (!targetPage) return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -4805,10 +5009,26 @@ document.addEventListener('click', function(e) {
         const baseUrl = window.location.origin + window.location.pathname;
         // Security: ดึงรหัสลับประจำใบมาต่อท้ายลิงก์ — Rules ฝั่ง Firebase จะรับเฉพาะการตอบกลับที่มีรหัสตรง
         let replyUrl = `${baseUrl}?mode=reply&id=${id}`;
+        let _hasTok = false, _expMs = 0;
         try {
-            const tokSnap = await dbRef.replyToken(id).once('value');
-            if (tokSnap.exists() && tokSnap.val()) replyUrl += '&token=' + tokSnap.val();
-        } catch(e) { console.warn('อ่าน reply token ไม่ได้ — ใช้ลิงก์แบบไม่มี token:', e.message); }
+            const shSnap = await dbRef.ncrSharedItem(id).once('value');
+            const sh = shSnap.exists() ? (shSnap.val() || {}) : {};
+            if (sh.replyToken) { replyUrl += '&token=' + sh.replyToken; _hasTok = true; }
+            _expMs = Number(sh.expiresAt || 0);
+        } catch(e) { console.warn('อ่านข้อมูลลิงก์ไม่ได้:', e.message); }
+
+        // เฟส 3: แถบบอกสถานะลิงก์ + ปุ่มออกลิงก์ใหม่ (เฉพาะผู้อนุมัติ)
+        const _now = Date.now();
+        const _dead = !_hasTok || !_expMs || _now > _expMs;
+        const _daysLeft = _expMs ? Math.ceil((_expMs - _now) / 86400000) : 0;
+        const _statusHTML = _dead
+            ? `<div style="background:rgba(224,90,90,.12);border:1px solid var(--danger);color:var(--danger);padding:10px;border-radius:8px;margin-bottom:12px;font-size:.85rem">
+                 ⌛ ลิงก์นี้${_hasTok ? 'หมดอายุแล้ว' : 'ยังไม่ถูกออก'} — Supplier ใช้ไม่ได้</div>`
+            : `<div style="background:rgba(61,186,111,.12);border:1px solid var(--success);color:var(--success);padding:10px;border-radius:8px;margin-bottom:12px;font-size:.85rem">
+                 ✅ ใช้ได้อีก ${_daysLeft} วัน (ถึง ${new Date(_expMs).toLocaleDateString('th-TH')})</div>`;
+        const _reissueHTML = isApprover()
+            ? `<button class="btn btn-secondary" style="margin-left:8px" onclick="reissueReplyLink('${String(id).replace(/'/g,"\\'")}')">🔄 ออกลิงก์ใหม่</button>`
+            : '';
         
         // ลบ modal เก่าถ้ามี (กรณีซ้อน)
         const oldModal = document.getElementById('qr-modal');
@@ -4823,12 +5043,13 @@ document.addEventListener('click', function(e) {
                         <button class="modal-close" onclick="closeModal('qr-modal')">✕</button>
                     </div>
                     <div class="modal-body">
-                        <p style="margin-bottom: 15px; color: var(--text-muted);">สแกนเพื่อกรอก Root Cause และ Corrective Action</p>
+                        <p style="margin-bottom: 12px; color: var(--text-muted);">สแกนเพื่อกรอก Root Cause และ Corrective Action</p>
+                        ${_statusHTML}
                         <div id="qrcode-container" style="display: flex; justify-content: center; background: white; padding: 20px; border-radius: 10px; margin-bottom: 15px;"></div>
                         <div style="word-break: break-all; font-size: 0.8rem; color: var(--accent2); margin-bottom: 15px;">
                             <a href="${replyUrl}" target="_blank" style="color: inherit;">${replyUrl}</a>
                         </div>
-                        <button class="btn btn-primary" onclick="copyToClipboard('${replyUrl}')">คัดลอกลิงก์</button>
+                        <button class="btn btn-primary" onclick="copyToClipboard('${replyUrl}')">คัดลอกลิงก์</button>${_reissueHTML}
                     </div>
                 </div>
             </div>
@@ -4868,6 +5089,20 @@ document.addEventListener('click', function(e) {
     };
 
     // เรียก QR/ลิงก์ย้อนหลังจากปุ่มในหน้ารายละเอียด — ส่งด้วย index กัน id ที่มี / หรือ ' ทำ onclick พัง
+    // เฟส 3: ออกลิงก์ชุดใหม่ — ลิงก์เก่าตายทันที เริ่มนับ 30 วันใหม่
+    window.reissueReplyLink = async function(id) {
+        if (!isApprover()) { showErrorToast('🔒 ออกลิงก์ใหม่ได้เฉพาะผู้อนุมัติ'); return; }
+        if (!confirm('ออกลิงก์ใหม่สำหรับ ' + id + '?\n\nลิงก์/QR เดิมที่เคยส่งให้ Supplier จะใช้ไม่ได้อีกทันที')) return;
+        const n = ncrList.find(x => x && x.id === id);
+        if (!n) { showErrorToast('⚠️ ไม่พบใบนี้'); return; }
+        try {
+            await issueReplyLink(n);
+            showAlert('✅ ออกลิงก์ใหม่แล้ว — ใช้ได้อีก ' + REPLY_LINK_DAYS + ' วัน');
+            const om = document.getElementById('qr-modal'); if (om) om.remove();
+            showQRCodeModal(id);
+        } catch(e) { showErrorToast('❌ ออกลิงก์ใหม่ไม่สำเร็จ: ' + e.message); }
+    };
+
     window.showQRCodeModalByIdx = function(idx) {
         const n = ncrList[(typeof idxOf === 'function') ? idxOf(idx) : idx];   // FIX-B4
         if (!n) { if (typeof showErrorToast === 'function') showErrorToast('ไม่พบรายการ NCR'); return; }
@@ -4965,10 +5200,10 @@ document.addEventListener('click', function(e) {
                 }
                 return;
             }
-            // ข้อ 5: ลิงก์ตอบกลับมีอายุ 90 วันนับจากวันอนุมัติ — เกินแล้วปิดรับ (ใบที่เข้าสถานะถัดไปแล้วมีหน้าแจ้งของตัวเองอยู่แล้ว)
-            if (ncr && (ncr.status === 'waiting-reply' || ncr.status === 'open') && ncr.replyTokenCreatedAt) {
-                const _ageDays = (Date.now() - new Date(ncr.replyTokenCreatedAt).getTime()) / 86400000;
-                if (isFinite(_ageDays) && _ageDays > 90) {
+            // เฟส 3: ลิงก์มีอายุ 30 วันนับจากวันออกลิงก์ — Firebase Rules ปิดการ "ส่งข้อมูล" ให้อีกชั้นแบบเป๊ะวินาที
+            if (ncr && (ncr.status === 'waiting-reply' || ncr.status === 'open')) {
+                const _exp = Number(ncr.expiresAt || 0);
+                if (!_exp || Date.now() > _exp) {
                     const _fp3 = document.getElementById('page-new-ncr');
                     if (typeof showPage === 'function') showPage('new-ncr');
                     if (_fp3 && !document.getElementById('reply-status-msg')) {
@@ -4976,7 +5211,7 @@ document.addEventListener('click', function(e) {
                         _sm3.id = 'reply-status-msg';
                         _sm3.style.cssText = 'text-align:center;padding:48px 24px;font-family:Sarabun,sans-serif';
                         _sm3.innerHTML = '<div style="font-size:2.5rem;margin-bottom:14px">⌛</div>'
-                            + '<div style="color:#e53935;font-size:1.05rem;font-weight:600">ลิงก์ตอบกลับนี้หมดอายุแล้ว (เกิน 90 วัน)</div>'
+                            + '<div style="color:#e53935;font-size:1.05rem;font-weight:600">ลิงก์ตอบกลับนี้หมดอายุแล้ว</div>'
                             + '<div style="color:var(--text-muted);font-size:.9rem;margin-top:10px">กรุณาติดต่อผู้ออก NCR เพื่อขอลิงก์ใหม่</div>';
                         _fp3.appendChild(_sm3);
                     }
@@ -5211,10 +5446,14 @@ document.addEventListener('click', function(e) {
                     try {
                         let prev = null;
                         try {
-                            const prevSnap = await dbRef.supplierReply(ncrId).once('value');
-                            if (prevSnap.exists()) prev = prevSnap.val();
+                            // เฟส 2: Supplier อ่าน "คำตอบของตัวเอง" กลับมาได้ผ่าน query ด้วย token
+                            // (เดิมอ่านไม่ได้เลย จึงตกไปดึงจากใบ ทำให้ช่องที่ QC กรอกเองหลุดมาให้เห็น)
+                            const pq = await db.ref('ncr_system/supplier_reply').orderByChild('_token').equalTo(replyToken).once('value');
+                            if (pq.exists()) {
+                                const cand = Object.values(pq.val() || {}).filter(Boolean);
+                                prev = cand[0] || null;
+                            }
                         } catch(pe) { console.warn('อ่านคำตอบเดิมไม่ได้:', pe.message); }
-                        if (!prev && ncr.supplierReply) prev = ncr;
                         if (prev) {
                             const setV = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
                             const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
