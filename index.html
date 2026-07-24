@@ -1184,13 +1184,11 @@
 
     <!-- Approver Emails (ข้อ 2: จำกัดสิทธิ์อนุมัติ) -->
     <div class="card">
-      <div class="card-header"><div class="card-title">🔐 Email ผู้มีสิทธิ์อนุมัติ NCR</div></div>
-      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:10px">
-        ถ้าระบุอย่างน้อย 1 email — เฉพาะบัญชีเหล่านี้เท่านั้นที่กดอนุมัติ/ตีกลับได้ · ถ้าปล่อยว่าง = ทุกคนที่ login กดได้ (แบบเดิม)
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <input type="email" id="add-approver-email" placeholder="เช่น qc05.wann@gmail.com">
-        <button class="btn btn-primary btn-sm" onclick="addApproverEmail()">+</button>
+      <div class="card-header"><div class="card-title">🔐 ทะเบียนผู้ใช้งานระบบ</div></div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:12px">
+        สิทธิ์ทั้งหมดมาจากทะเบียน <b>roles</b> ในฐานข้อมูล (ที่เดียวกับที่ Firebase ใช้ตรวจจริง)<br>
+        เพิ่ม/ลบคน: Firebase Console → Realtime Database → Data → <b>ncr_system/roles</b><br>
+        <span style="color:var(--warning)">⚠️ จุดในอีเมลต้องเปลี่ยนเป็นลูกน้ำ เช่น <code>somchai@wann,co,th</code></span>
       </div>
       <div class="tag-list" id="approver-emails-list"></div>
     </div>
@@ -1471,6 +1469,7 @@ const dbRef = {
 function emailKey(email) { return String(email || '').toLowerCase().replace(/\./g, ','); }
 
 let currentRole = null;   // 'admin' | 'approver' | 'user' | null (= ไม่มีชื่อในทะเบียน)
+let ALL_ROLES = {};       // ทะเบียนทั้งหมด ใช้แสดงในหน้าตั้งค่า
 
 async function loadMyRole(user) {
   currentRole = null;
@@ -1766,6 +1765,12 @@ async function loadData() {
       companyLogo = logoSnap.val();
     }
     updateLogoDisplay();
+
+    // เฟส 3: โหลดทะเบียนผู้ใช้มาแสดงในหน้าตั้งค่า
+    try {
+      const rSnap = await dbRef.roles().once('value');
+      ALL_ROLES = rSnap.exists() ? (rSnap.val() || {}) : {};
+    } catch(e) { console.warn('อ่านทะเบียน roles ไม่สำเร็จ:', e.message); }
 
     // เฟส 1: จด "สภาพเดิม" ของข้อมูลตั้งค่าไว้เทียบตอนบันทึก
     // เพื่อไม่ให้ saveData() เขียนทับ settings/bp_names/signatures ทุกครั้งโดยไม่จำเป็น
@@ -3468,6 +3473,15 @@ async function viewNCR(idx, expectId) {
 }
 
 function switchStep(num) {
+  // Approval Gate (ด่านกลาง): ใบที่ยังไม่ผ่านการอนุมัติ ห้ามข้ามไปขั้นตอนถัดไป
+  // ISO 9001 ข้อ 10.2 — ต้องดำเนินการตามลำดับ อนุมัติ → Supplier ตอบ → ตรวจติดตาม → ปิดใบ
+  if (num > 1 && typeof _viewingNcrId !== 'undefined' && _viewingNcrId) {
+    const _n = ncrList.find(x => x && x.id === _viewingNcrId);
+    if (_n && _n.status === 'pending-approval') {
+      showErrorToast('🔒 ใบนี้ยังไม่ผ่านการอนุมัติ — ต้องอนุมัติในขั้นตอนที่ 1 ก่อน');
+      return;
+    }
+  }
   document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('step-panel-' + num);
   if (panel) panel.classList.add('active');
@@ -3511,10 +3525,9 @@ async function saveStep2(idx) {
 
 // ---------- ข้อ 2: Whitelist ผู้มีสิทธิ์อนุมัติ ----------
 function canApprove() {
-  const list = settings.approverEmails || [];
-  if (!list.length) return true; // ไม่ตั้ง whitelist = ทุกคนที่ login (พฤติกรรมเดิม)
-  const email = (typeof auth !== 'undefined' && auth && auth.currentUser) ? (auth.currentUser.email || '').toLowerCase() : '';
-  return list.some(e => e.toLowerCase() === email);
+  // เฟส 3: สิทธิ์อนุมัติมาจากทะเบียน roles อย่างเดียว (แหล่งเดียวกับที่ Firebase Rules ใช้)
+  // ของเดิมเช็คจาก settings.approverEmails ซึ่ง Rules เลิกดูแล้ว ทำให้หน้าเว็บกับฐานข้อมูลตอบไม่ตรงกัน
+  return isApprover();
 }
 
 async function addApproverEmail() {
@@ -3539,11 +3552,8 @@ async function removeApproverEmail(i) {
 
 // Mirror whitelist ขึ้น node แยก (key = email แทน . ด้วย ,) ให้ Firebase Rules ตรวจสิทธิ์ฝั่ง server ได้
 async function syncApproverEmailsNode() {
-  try {
-    const obj = {};
-    (settings.approverEmails || []).forEach(e => { obj[e.toLowerCase().replace(/\./g, ',')] = true; });
-    await dbRef.approverEmails().set(obj);
-  } catch(e) { console.warn('sync approver_emails:', e.message); }
+  // เฟส 3: เลิกใช้ node approver_emails แล้ว — สิทธิ์อยู่ที่ roles ทั้งหมด
+  // คงฟังก์ชันไว้เปล่าๆ เพื่อไม่ให้จุดที่เรียกอยู่พัง
 }
 
 // ---------- ข้อ 6: แจ้งเตือนผ่าน Webhook (Discord / Telegram / Google Apps Script) ----------
@@ -3606,7 +3616,7 @@ function approvalCardHTML(n, idx) {
       ${canApprove() ? `
       <button class="btn btn-primary btn-sm" onclick="approveNCRDoc(${idx})">✅ อนุมัติ + สร้างลิงก์ Supplier</button>
       <button class="btn btn-secondary btn-sm" onclick="returnNCRForRevision(${idx})">↩️ ส่งกลับให้แก้ไข</button>` : `
-      <div style="font-size:.82rem;color:#92400e;background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;padding:8px 12px">🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ — รอผู้ทบทวนที่ได้รับสิทธิ์ (ตั้งค่าได้ที่หน้า ตั้งค่า)</div>`}
+      <div style="font-size:.82rem;color:#92400e;background:#fff8e1;border:1px solid #f59e0b;border-radius:8px;padding:8px 12px">🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ — ต้องเป็นผู้อนุมัติในทะเบียน roles เท่านั้น</div>`}
     </div>
   </div>`;
 }
@@ -3614,7 +3624,7 @@ function approvalCardHTML(n, idx) {
 async function approveNCRDoc(idx) {
   const n = ncrList[idxOf(idx)];   // FIX-B4
   if (!n) return;
-  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ NCR — ตรวจสอบรายชื่อได้ที่ ตั้งค่า > Email ผู้มีสิทธิ์อนุมัติ'); return; }
+  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์อนุมัติ NCR — สิทธิ์อนุมัติกำหนดที่ทะเบียน roles'); return; }
   const sel = document.getElementById('approve-reviewer-select');
   const reviewerName = sel ? sel.value.trim() : '';
   if (!reviewerName) { showErrorToast('⚠️ กรุณาเลือกชื่อผู้ทบทวนก่อนอนุมัติ'); if (sel) sel.focus(); return; }
@@ -3652,7 +3662,7 @@ async function approveNCRDoc(idx) {
 async function returnNCRForRevision(idx) {
   const n = ncrList[idxOf(idx)];   // FIX-B4
   if (!n) return;
-  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์ตีกลับใบรออนุมัติ — ตรวจสอบรายชื่อได้ที่ ตั้งค่า > Email ผู้มีสิทธิ์อนุมัติ'); return; }
+  if (!canApprove()) { showErrorToast('🔐 บัญชีนี้ไม่มีสิทธิ์ตีกลับใบรออนุมัติ — สิทธิ์อนุมัติกำหนดที่ทะเบียน roles'); return; }
   const sel = document.getElementById('approve-reviewer-select');
   const reviewerName = sel ? sel.value.trim() : '';
   const reason = prompt('เหตุผลที่ส่งกลับให้ผู้ออก NCR แก้ไข:\n(จะแสดงให้ผู้ออกเห็นในขั้นตอนที่ 1)');
@@ -3779,6 +3789,11 @@ async function showReplyHistory(idx) {
 
 async function saveStep3(idx) {
   const n = ncrList[idxOf(idx)];   // FIX-B4
+  // Approval Gate: ห้ามบันทึกผลตรวจติดตามก่อนใบผ่านการอนุมัติ
+  if (n && n.status === 'pending-approval') {
+    showErrorToast('🔒 ใบนี้ยังไม่ผ่านการอนุมัติจากผู้ทบทวน — กลับไปขั้นตอนที่ 1 ก่อน');
+    return;
+  }
   const auditResult = document.getElementById('modal-audit-result').value;
   if (!auditResult.trim()) { alert('กรุณาระบุผลการตรวจติดตาม'); return; }
   n.auditResult     = auditResult;
@@ -3792,6 +3807,11 @@ async function saveStep3(idx) {
 
 async function saveStep4(idx) {
   const n = ncrList[idxOf(idx)];   // FIX-B4
+  // Approval Gate: ห้ามปิดใบที่ยังไม่ผ่านการอนุมัติ (เดิมกดข้ามมาปิดได้เลยในคลิกเดียว)
+  if (n && n.status === 'pending-approval') {
+    showErrorToast('🔒 ใบนี้ยังไม่ผ่านการอนุมัติจากผู้ทบทวน — ปิดใบไม่ได้');
+    return;
+  }
   const result = document.querySelector('input[name="closure-result"]:checked');
   const closureDate = document.getElementById('modal-closure-date').value;
   if (!result) { alert('กรุณาเลือกผลสรุปการปิด NCR (ยอมรับ/ไม่ยอมรับ)'); return; }
@@ -4484,8 +4504,18 @@ function renderSettings() {
     `<div class="tag">${r}<span class="del-tag" onclick="removePerson('reviewers',${i})">✕</span></div>`).join('');
   // Approver Emails (ข้อ 2)
   const apEl = document.getElementById('approver-emails-list');
-  if (apEl) apEl.innerHTML = (settings.approverEmails || []).map((e,i) =>
-    `<div class="tag">${escapeHTML(e)}<span class="del-tag" onclick="removeApproverEmail(${i})">✕</span></div>`).join('') || '<span style="font-size:.8rem;color:var(--text-muted)">ยังไม่จำกัดสิทธิ์ — ทุกคนที่ login อนุมัติได้</span>';
+  if (apEl) {
+    const icon = { admin: '🛡️', approver: '✅', user: '👤' };
+    const name = { admin: 'ผู้ดูแลระบบ', approver: 'ผู้อนุมัติ', user: 'ผู้ใช้งาน' };
+    const keys = Object.keys(ALL_ROLES || {});
+    apEl.innerHTML = keys.length
+      ? keys.sort().map(k => {
+          const r = String(ALL_ROLES[k] || '');
+          return `<div class="tag">${icon[r] || '❓'} ${escapeHTML(k.replace(/,/g, '.'))}
+                  <span style="opacity:.6;margin-left:6px">${name[r] || r}</span></div>`;
+        }).join('')
+      : '<span style="font-size:.8rem;color:var(--danger)">⚠️ ยังไม่มีทะเบียน roles — ไม่มีใครเข้าระบบได้</span>';
+  }
   // Notify Webhook (ข้อ 6)
   const whEl = document.getElementById('notify-webhook-url');
   if (whEl && document.activeElement !== whEl) whEl.value = settings.notifyWebhookUrl || '';
