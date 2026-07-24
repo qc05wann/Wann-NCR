@@ -1313,15 +1313,15 @@
       — และทำให้เลขเอกสารใบใหม่รันต่อจากใบล่าสุดได้ถูกต้อง
     </p>
     <div class="btn-row" style="margin-bottom:16px">
-      <button class="btn btn-success btn-sm" onclick="downloadNCRTemplate()">📋 ดาวน์โหลด Template</button>
-      <button class="btn btn-warning btn-sm" onclick="importOldNCR()">📚 นำเข้าใบ NCR เก่า</button>
+      <button class="btn btn-warning btn-sm" onclick="importOldNCR()">📚 เลือกไฟล์ฟอร์มเดิม (.xlsx)</button>
     </div>
     <div style="background:var(--surface2);border-radius:8px;padding:14px;font-size:.83rem;color:var(--text-muted)">
       <strong style="color:var(--warning)">วิธีใช้:</strong><br>
-      1. กด <strong>ดาวน์โหลด Template</strong> → คัดลอกข้อมูลเก่าของคุณลงไป (เรียงคอลัมน์ยังไงก็ได้ ระบบดูจากชื่อหัวคอลัมน์)<br>
-      2. กด <strong>นำเข้าใบ NCR เก่า</strong> → ระบบจะสรุปให้ดูก่อนว่าจะนำเข้ากี่ใบ ข้ามกี่ใบ<br>
-      3. ต้องกดยืนยันอีกครั้งถึงจะบันทึกจริง<br>
-      <span style="color:var(--danger)">⚠️ ใบที่เลขที่ซ้ำกับในระบบจะถูกข้าม ไม่เขียนทับของเดิม</span>
+      1. กดปุ่มด้านบน → <strong>เลือกได้ทีละหลายไฟล์</strong> (Ctrl+A เลือกทั้งโฟลเดอร์ได้)<br>
+      2. ระบบอ่านข้อมูลจากฟอร์ม + ดึงรูปหลักฐานจากชีทที่ 2 ให้อัตโนมัติ<br>
+      3. <strong>แสดงตารางให้ตรวจก่อน</strong> → ตรวจแล้วค่อยกดยืนยันบันทึก<br>
+      <span style="color:var(--text-muted)">• ใบที่กรอกไม่ครบก็นำเข้าได้ ช่องที่ว่างมาเติมทีหลังในระบบได้</span><br>
+      <span style="color:var(--danger)">⚠️ เลขที่ซ้ำกับในระบบจะถูกข้าม ไม่เขียนทับของเดิม</span>
     </div>
   </div>
 
@@ -1407,7 +1407,7 @@ if (firebaseConfig.apiKey.includes('PASTE_YOUR')) {
     // วิธีเปิด: 1) สร้าง reCAPTCHA v3 Site Key  2) ลงทะเบียนใน Firebase Console → App Check
     //          3) วาง Site Key แทนที่ข้อความ PASTE_RECAPTCHA_SITE_KEY ด้านล่าง
     // ถ้ายังไม่วางคีย์ โค้ดนี้จะไม่ทำงาน — ระบบใช้ได้ปกติเหมือนเดิม
-    const APP_CHECK_SITE_KEY = '6Lf1dEwtAAAAAKT2WdTeEU6pdQtShVWNtZvozuoy';
+    const APP_CHECK_SITE_KEY = '6Lf08GItAAAAAGD02dbLP_gN7j0rKkvtD1K-pFyI';
     if (APP_CHECK_SITE_KEY && !APP_CHECK_SITE_KEY.includes('PASTE_')) {
       try {
         firebase.appCheck().activate(APP_CHECK_SITE_KEY, /* auto refresh */ true);
@@ -3991,40 +3991,213 @@ async function deleteNCR(idx, expectId) {
 }
 
 
-// ==================== นำเข้าใบ NCR ย้อนหลังจาก Excel ====================
-// ระบบจับคู่คอลัมน์จาก "ชื่อหัวคอลัมน์" ไม่ใช่ตำแหน่ง — เรียงคอลัมน์ยังไงก็ได้
-const _NCR_COLS = {
-  id:                 ['เลขที่เอกสาร','เลขที่','เลขที่ncr','ncrno','ncrno.','id','docno'],
-  date:               ['วันที่','วันที่ออกเอกสาร','date'],
-  bp:                 ['เรียน','เรียน(บริษัท/หน่วยงาน)','บริษัท','ผู้ขาย','supplier','bp'],
-  dept:               ['แผนก','dept','department'],
-  subject:            ['เรื่อง','subject'],
-  productCode:        ['รหัสสินค้า','productcode'],
-  ncName:             ['ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด','ชื่อสินค้า','item'],
-  ncType:             ['ประเภท','ประเภทของไม่เป็นไปตามข้อกำหนด','type'],
-  refDoc:             ['เลขที่ใบสั่งการผลิต','เอกสารอ้างอิง','refdoc','ref'],
-  defectDetail:       ['รายละเอียดข้อบกพร่อง','รายละเอียด','defect'],
-  supplierReply:      ['สาเหตุของปัญหา','สาเหตุ','rootcause'],
-  supplierCA:         ['การแก้ไข','correctiveaction','ca'],
-  supplierPreventive: ['การป้องกัน','preventiveaction','pa'],
-  auditResult:        ['ผลการตรวจติดตาม','ผลตรวจติดตาม','auditresult'],
-  reporter:           ['ผู้รายงาน','reporter'],
-  reviewer:           ['ผู้ทบทวน','reviewer'],
-  auditor:            ['ผู้ตรวจติดตาม','ผู้ตรวจ','auditor'],
-  status:             ['สถานะ','status'],
-  closureDate:        ['วันที่ปิด','closuredate'],
-  remark:             ['หมายเหตุ','remark','note'],
-};
 
-const _NCR_STATUS_MAP = {
-  'ปิดแล้ว':'closed','ปิด':'closed','closed':'closed','close':'closed',
-  'รออนุมัติ':'pending-approval','pendingapproval':'pending-approval','pending':'pending-approval',
-  'รอตอบกลับ':'waiting-reply','waitingreply':'waiting-reply','open':'waiting-reply',
-  'รอตรวจติดตาม':'waiting-audit','waitingaudit':'waiting-audit',
-};
+// ==================== นำเข้าใบ NCR ย้อนหลัง (อ่านจากไฟล์ฟอร์มเดิม FM-QA-19) ====================
+// อ่านแบบ "หาป้ายกำกับ แล้วเอาค่าที่อยู่ขวา/ใต้" ไม่ยึดตำแหน่งเซลล์ตายตัว
+// เพื่อให้ยังอ่านได้ถ้าฟอร์มบางไฟล์แถวขยับ หรือเป็นฟอร์มเวอร์ชันเก่ากว่า
 
-function _normHead(v) { return String(v == null ? '' : v).toLowerCase().replace(/[\s._\-()\/]/g, ''); }
+let _jszipPromise = null;
+function loadJSZip() {
+  if (window.JSZip) return Promise.resolve(window.JSZip);
+  if (!_jszipPromise) {
+    _jszipPromise = new Promise((res, rej) => {
+      const sc = document.createElement('script');
+      sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      sc.onload = () => res(window.JSZip);
+      sc.onerror = () => rej(new Error('โหลดตัวอ่านรูปในไฟล์ Excel ไม่สำเร็จ (ต้องต่อเน็ต)'));
+      document.head.appendChild(sc);
+    });
+  }
+  return _jszipPromise;
+}
 
+function _sq(v) { return String(v == null ? '' : v).replace(/\s+/g, ''); }
+function _txt(grid, r, c) {
+  const row = grid[r];
+  const v = row ? row[c] : null;
+  return (v === null || v === undefined) ? '' : String(v).trim();
+}
+
+// หาตำแหน่งเซลล์ที่ "ขึ้นต้นด้วย" ป้ายกำกับที่ระบุ
+function _findLabel(grid, label) {
+  const L = _sq(label);
+  let loose = null;
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      if (typeof row[c] !== 'string') continue;
+      const v = _sq(row[c]).replace(/[:：]$/, '');
+      if (v === L) return { r: r, c: c };                             // ตรงเป๊ะ — เอาอันนี้ก่อน
+      if (!loose && v.indexOf(L) === 0) loose = { r: r, c: c };       // ขึ้นต้นด้วย — สำรอง
+    }
+  }
+  return loose;
+}
+
+// ค่าที่อยู่ "ขวามือ" ของป้ายกำกับ
+function _valRight(grid, label, span) {
+  const at = _findLabel(grid, label);
+  if (!at) return '';
+  const row = grid[at.r] || [];
+  for (let k = 1; k <= (span || 8) && at.c + k < row.length + 8; k++) {
+    const v = _txt(grid, at.r, at.c + k);
+    if (v && _sq(v) !== _sq(label)) return v;
+  }
+  return '';
+}
+
+// ป้ายกำกับที่ใช้เป็น "เส้นหยุด" เวลาอ่านข้อความหลายบรรทัด
+const _STOP_LABELS = ['ผู้รายงาน','ผู้ทบทวน','การหาสาเหตุ','สาเหตุของปัญหา','รายละเอียดการแก้ไข',
+  'รายละเอียดการป้องกัน','ระยะเวลาดำเนินการ','วันที่จะเริ่ม','กำหนดตรวจติดตาม','การตรวจติดตาม',
+  'ผลการตรวจติดตาม','ผู้ตรวจ','สรุปการปิด','ยอมรับการแก้ไข','ไม่ยอมรับการแก้ไข','ทำลาย','อื่นๆ'];
+
+function _isStopRow(grid, r) {
+  const row = grid[r] || [];
+  for (let c = 0; c < Math.min(row.length, 10); c++) {
+    const v = _txt(grid, r, c);
+    if (v && _STOP_LABELS.some(L => _sq(v).indexOf(_sq(L)) === 0)) return true;
+  }
+  return false;
+}
+
+// ข้อความหลายบรรทัด: ค่าบนแถวเดียวกัน (ขวาของป้าย) + แถวถัดๆ ไปจนเจอป้ายถัดไป
+function _valBlock(grid, label, maxRows) {
+  const at = _findLabel(grid, label);
+  if (!at) return '';
+  const parts = [];
+  const same = _valRight(grid, label, 8);
+  if (same) parts.push(same);
+  for (let k = 1; k <= (maxRows || 5); k++) {
+    const r = at.r + k;
+    if (r >= grid.length || _isStopRow(grid, r)) break;
+    const row = grid[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const v = _txt(grid, r, c);
+      if (v && v !== '(' && v !== ')' && !/^ว\/ด\/ป/.test(v) && _sq(v) !== _sq(label)) parts.push(v);
+    }
+  }
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+// ชื่อคนที่เซ็น: อยู่แถวถัดจากป้าย และคั่นด้วยวงเล็บ ( ชื่อ )
+function _namesBelow(grid, label) {
+  const at = _findLabel(grid, label);
+  if (!at) return [];
+  const row = grid[at.r + 1] || [];
+  const out = [];
+  for (let c = 0; c < row.length; c++) {
+    const v = _txt(grid, at.r + 1, c);
+    if (v && v !== '(' && v !== ')' && !/^ว\/ด\/ป/.test(v)) out.push(v);
+  }
+  return out;
+}
+
+// ── ดึงรูปที่ผูกกับ "ชีทที่ 2" เท่านั้น (ชีทแรกมีแต่โลโก้บริษัท) ──
+async function _extractSheetImages(file, sheetIndexFrom1) {
+  const JSZipLib = await loadJSZip();
+  const zip = await JSZipLib.loadAsync(file);
+  const readTxt = async (path) => { const f = zip.file(path); return f ? await f.async('string') : ''; };
+  const parse   = (xml) => new DOMParser().parseFromString(xml, 'application/xml');
+
+  // workbook → ลำดับชีท → rId
+  const wbXml = await readTxt('xl/workbook.xml');
+  if (!wbXml) return [];
+  const sheets = [...parse(wbXml).getElementsByTagName('sheet')];
+  if (sheets.length < sheetIndexFrom1) return [];
+  const rid = sheets[sheetIndexFrom1 - 1].getAttribute('r:id')
+           || sheets[sheetIndexFrom1 - 1].getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+
+  // rId → ไฟล์ชีท
+  const wbRels = parse(await readTxt('xl/_rels/workbook.xml.rels'));
+  let sheetPath = '';
+  [...wbRels.getElementsByTagName('Relationship')].forEach(rel => {
+    if (rel.getAttribute('Id') === rid) sheetPath = rel.getAttribute('Target').replace(/^\/?xl\//, '').replace(/^\.\//, '');
+  });
+  if (!sheetPath) return [];
+
+  // ชีท → drawing
+  const shRels = await readTxt('xl/' + sheetPath.replace(/([^\/]+)$/, '_rels/$1.rels'));
+  if (!shRels) return [];
+  let drawPath = '';
+  [...parse(shRels).getElementsByTagName('Relationship')].forEach(rel => {
+    const t = rel.getAttribute('Target') || '';
+    if (t.indexOf('drawing') > -1) drawPath = t.replace(/^\.\.\//, '');
+  });
+  if (!drawPath) return [];
+
+  // drawing → ไฟล์รูป
+  const dwRels = await readTxt('xl/' + drawPath.replace(/([^\/]+)$/, '_rels/$1.rels'));
+  if (!dwRels) return [];
+  const media = [];
+  [...parse(dwRels).getElementsByTagName('Relationship')].forEach(rel => {
+    const t = rel.getAttribute('Target') || '';
+    if (t.indexOf('media/') > -1) media.push('xl/' + t.replace(/^\.\.\//, ''));
+  });
+
+  const out = [];
+  for (const m of media) {
+    const f = zip.file(m);
+    if (!f) continue;
+    const b64  = await f.async('base64');
+    const ext  = (m.split('.').pop() || 'png').toLowerCase();
+    const mime = ext === 'png' ? 'image/png' : (ext === 'gif' ? 'image/gif' : 'image/jpeg');
+    const raw  = 'data:' + mime + ';base64,' + b64;
+    const small = await new Promise(res => compressImage(raw, res));   // บีบอัดมาตรฐานเดียวกับที่ระบบใช้
+    out.push({ name: m.split('/').pop(), dataUrl: small });
+  }
+  return out;
+}
+
+// ── อ่าน 1 ไฟล์ → 1 ใบ NCR ──
+async function _parseNCRFile(file) {
+  const buf  = await file.arrayBuffer();
+  const wb   = XLSX.read(buf, { type: 'array', cellDates: true });
+  const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null, raw: false });
+
+  const rawId  = _valRight(grid, 'เลขที่เอกสาร');
+  const id     = _normNcrId(rawId);
+  const names1 = _namesBelow(grid, 'ผู้รายงาน');
+  const names2 = _namesBelow(grid, 'ผู้ตรวจ');
+  const warn   = [];
+
+  // เตือนถ้าชื่อไฟล์กับเลขในเอกสารเป็นคนละประเภท (NCR / NCRW)
+  const fromName = _normNcrId((file.name || '').replace(/_/g, '/').replace(/\.xlsx?$/i, ''));
+  if (id && fromName && id.replace(/\d/g,'').replace(/\//g,'') !== fromName.replace(/\d/g,'').replace(/\//g,'')) {
+    warn.push('ชื่อไฟล์เป็น ' + fromName + ' แต่ในเอกสารเป็น ' + id);
+  }
+
+  return {
+    _file: file.name,
+    _warn: warn,
+    id: id,
+    _rawId: rawId,
+    date: _impDate(_valRight(grid, 'วันที่')),
+    dept: _valRight(grid, 'เรียน').replace(/^ฝ่าย/, '').trim(),   // "เรียน" ของฟอร์มเก่า = แผนกที่แจ้ง
+    bp: _valRight(grid, 'บริษัท/หน่วยงาน'),                        // นี่คือ Supplier ตัวจริง
+    subject: _valRight(grid, 'เรื่อง'),
+    ncName: _valRight(grid, 'ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด'),
+    productCode: _valRight(grid, 'รหัสสินค้า').split('\n')[0].trim(),
+    refDoc: _valRight(grid, 'เลขที่ใบสั่งการผลิต'),
+    defectDetail: _valBlock(grid, 'รายละเอียด', 5),
+    reporter: names1[0] || '',
+    reviewer: names1[1] || '',
+    supplierReply: _valBlock(grid, 'สาเหตุของปัญหา', 5),
+    supplierPreventive: _valBlock(grid, 'รายละเอียดการป้องกัน', 5),
+    auditResult: _valBlock(grid, 'ผลการตรวจติดตาม', 5),
+    actionDuration: _valRight(grid, 'ระยะเวลาดำเนินการ'),
+    supplierPerson: _valRight(grid, 'ผู้รับผิดชอบการดำเนินการ'),
+    supplierPosition: _valRight(grid, 'ตำแหน่ง'),
+    actionStartDate: _impDate(_valRight(grid, 'วันที่จะเริ่มดำเนินการ')),
+    auditDueDate: _impDate(_valRight(grid, 'กำหนดตรวจติดตาม')),
+    fixAcknowledgeDate: _impDate(_valRight(grid, 'วันที่รับทราบให้แก้ไข')),
+    auditor: names2[0] || '',
+    qmr: _valRight(grid, 'QMR'),
+    images: (wb.SheetNames.length > 1) ? await _extractSheetImages(file, 2) : [],
+  };
+}
+
+
+// ── ตัวช่วยแปลงวันที่ / เลขเอกสาร ──────────────────────────────
 function _ymd(y, mo, d) {
   if (y > 2400) y -= 543;   // ปี พ.ศ. → ค.ศ.
   if (y < 100)  y += 2000;
@@ -4034,128 +4207,116 @@ function _ymd(y, mo, d) {
 function _impDate(v) {
   if (v === null || v === undefined || v === '') return '';
   if (v instanceof Date && !isNaN(v)) return _ymd(v.getFullYear(), v.getMonth()+1, v.getDate());
-  const s = String(v).trim();
-  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);            if (m) return _ymd(+m[1], +m[2], +m[3]);
-  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if (m) return _ymd(+m[3], +m[2], +m[1]);
+  const t = String(v).trim();
+  let m = t.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);              if (m) return _ymd(+m[1], +m[2], +m[3]);
+  m = t.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);    if (m) return _ymd(+m[3], +m[2], +m[1]);
   return '';
 }
 
-// ทำให้เลขเอกสารอยู่ในรูปแบบมาตรฐาน เช่น ncr1/25 → NCR001/25
+// ncr1/25 → NCR001/25 · NCR-7/2568 → NCR007/25
 function _normNcrId(v) {
-  const s = String(v == null ? '' : v).trim().toUpperCase().replace(/\s/g, '');
-  const m = s.match(/^(NCRW|NCR)[-\s]?(\d+)\s*[\/\-]\s*(\d{2,4})$/);
+  const t = String(v == null ? '' : v).trim().toUpperCase().replace(/\s/g, '');
+  const m = t.match(/(NCRW|NCR)[-]?(\d+)[\/\-](\d{2,4})/);
   if (!m) return '';
   let yr = m[3];
   if (yr.length === 4) yr = (parseInt(yr,10) > 2400 ? parseInt(yr,10) - 543 : parseInt(yr,10)).toString().slice(-2);
   return m[1] + String(parseInt(m[2],10)).padStart(3,'0') + '/' + yr;
 }
 
-function downloadNCRTemplate() {
-  const headers = ['เลขที่เอกสาร','วันที่','เรียน (บริษัท/หน่วยงาน)','แผนก','เรื่อง','รหัสสินค้า',
-                   'ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด','เลขที่ใบสั่งการผลิต','รายละเอียดข้อบกพร่อง',
-                   'สาเหตุของปัญหา','การแก้ไข','การป้องกัน','ผลการตรวจติดตาม',
-                   'ผู้รายงาน','ผู้ทบทวน','ผู้ตรวจติดตาม','สถานะ','วันที่ปิด','หมายเหตุ'];
-  const example = ['NCR001/25','15/03/2025','บริษัท ตัวอย่าง จำกัด','จัดซื้อ','พบข้อบกพร่องของบรรจุภัณฑ์','PK-XXX-0001',
-                   'ฝากระป๋องแป้ง 20 g','P1234/25','ฝามีความมันบริเวณด้านนอก',
-                   'เครื่องปั๊มตั้งค่าไม่ถูกต้อง','ปรับตั้งเครื่องใหม่','เพิ่มจุดตรวจก่อนส่งมอบ','ตรวจแล้วไม่พบปัญหาซ้ำ',
-                   'นายวัชพล จำรัสชูเกียรติ','นายภาคภูมิ กนกพรเวโรจน์','นายภาคภูมิ กนกพรเวโรจน์','ปิดแล้ว','30/03/2025',''];
-  const note = ['* ลบแถวตัวอย่างนี้ก่อนนำเข้า | สถานะใส่ได้: ปิดแล้ว / รอตอบกลับ / รอตรวจติดตาม / รออนุมัติ (ถ้าเว้นว่าง = ปิดแล้ว)'];
-  const ws = XLSX.utils.aoa_to_sheet([headers, example, [], note]);
-  ws['!cols'] = headers.map(() => ({ wch: 24 }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'ncr');
-  XLSX.writeFile(wb, 'NCR-import-template.xlsx');
-}
-
+// ── ตัวหลัก: เลือกไฟล์ → อ่าน → แสดงตารางให้ตรวจ → ยืนยัน → บันทึก ──
 async function importOldNCR() {
   if (!isAdmin()) { showErrorToast('🔒 นำเข้าใบ NCR ย้อนหลังได้เฉพาะผู้ดูแลระบบ'); return; }
   const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = '.xlsx,.xls';
+  inp.type = 'file'; inp.accept = '.xlsx,.xls'; inp.multiple = true;
   inp.onchange = async () => {
-    const f = inp.files && inp.files[0];
-    if (!f) return;
-    try {
-      const wb   = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
-      const name = wb.SheetNames.find(n => _normHead(n) === 'ncr') || wb.SheetNames[0];
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: true });
-      if (!rows.length) { alert('ไม่พบข้อมูลในไฟล์'); return; }
+    const files = [...(inp.files || [])];
+    if (!files.length) return;
+    const box = document.createElement('div');
+    box.id = 'imp-modal';
+    box.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;font-family:Sarabun,sans-serif';
+    box.innerHTML = '<div style="background:var(--surface);border-radius:12px;padding:24px;max-width:96vw;max-height:88vh;overflow:auto;min-width:320px">'
+      + '<div id="imp-body" style="color:var(--text)">⏳ กำลังอ่านไฟล์ 0/' + files.length + ' ...</div></div>';
+    document.body.appendChild(box);
+    const body = document.getElementById('imp-body');
 
-      // จับคู่ชื่อหัวคอลัมน์ → ฟิลด์ในระบบ
-      const headerMap = {};
-      Object.keys(_NCR_COLS).forEach(field => {
-        _NCR_COLS[field].forEach(alias => { headerMap[_normHead(alias)] = field; });
-      });
-
-      const ok = [], dup = [], bad = [], unknownHeads = new Set();
-      const existing = new Set(ncrList.map(n => n && n.id).filter(Boolean));
-      const nowIso = new Date().toISOString();
-
-      rows.forEach((row, i) => {
-        const rec = {};
-        Object.keys(row).forEach(k => {
-          const field = headerMap[_normHead(k)];
-          if (field) rec[field] = row[k];
-          else if (String(k).trim() && !String(k).startsWith('__EMPTY')) unknownHeads.add(String(k).trim());
-        });
-
-        const id = _normNcrId(rec.id);
-        if (!id) { if (String(rec.id || '').trim()) bad.push('แถว ' + (i + 2)); return; }
-        if (existing.has(id)) { dup.push(id); return; }
-        existing.add(id);
-
-        const st = _NCR_STATUS_MAP[_normHead(rec.status)] || 'closed';
-        const dt = _impDate(rec.date);
-        const n = {
-          id: id,
-          date: dt,
-          bp: String(rec.bp || '').trim(),
-          dept: String(rec.dept || '').trim(),
-          subject: String(rec.subject || '').trim(),
-          productCode: String(rec.productCode || '').trim(),
-          ncName: String(rec.ncName || '').trim(),
-          ncType: String(rec.ncType || '').trim(),
-          refDoc: String(rec.refDoc || '').trim(),
-          defectDetail: String(rec.defectDetail || '').trim(),
-          supplierReply: String(rec.supplierReply || '').trim(),
-          supplierCA: String(rec.supplierCA || '').trim(),
-          supplierPreventive: String(rec.supplierPreventive || '').trim(),
-          auditResult: String(rec.auditResult || '').trim(),
-          reporter: String(rec.reporter || '').trim(),
-          reviewer: String(rec.reviewer || '').trim(),
-          auditor: String(rec.auditor || '').trim(),
-          remark: String(rec.remark || '').trim(),
-          closureDate: _impDate(rec.closureDate),
-          status: st,
-          images: [],
-          createdAt: (dt ? dt + 'T00:00:00.000Z' : nowIso),
-          updatedAt: nowIso,
-          importedAt: nowIso,      // ทำเครื่องหมายว่าเป็นใบที่นำเข้าย้อนหลัง
-        };
-        if (st === 'closed') n.closureResult = 'accept';
-        ok.push(n);
-      });
-
-      let msg = '📊 ตรวจไฟล์แล้ว — พบ ' + rows.length + ' แถว\n\n'
-              + '✅ นำเข้าได้:            ' + ok.length + ' ใบ\n'
-              + '⏭️ ข้าม (เลขที่ซ้ำ):     ' + dup.length + ' ใบ\n'
-              + '❌ เลขที่อ่านไม่ออก:    ' + bad.length + ' แถว\n';
-      if (bad.length) msg += '\n   → ' + bad.slice(0, 6).join(', ') + (bad.length > 6 ? ' ...' : '') + '\n';
-      if (unknownHeads.size) msg += '\n⚠️ คอลัมน์ที่ระบบไม่รู้จัก (จะถูกข้าม):\n   ' + [...unknownHeads].slice(0, 6).join(', ') + '\n';
-      if (!ok.length) { alert(msg + '\nไม่มีใบที่นำเข้าได้'); return; }
-      msg += '\nยืนยันนำเข้า ' + ok.length + ' ใบ?';
-      if (!confirm(msg)) return;
-
-      // ใช้เส้นทางบันทึกปกติ (รายใบ) ไม่ใช่โหมดเขียนทั้งก้อน
-      // เพราะโหมดเขียนทั้งก้อนจะไปทับ ncr_shared ทั้งหมด ทำให้รูปและลิงก์ของใบเดิมหาย
-      ok.forEach(n => { ncrList.push(n); markNCRDirty(n.id); });
-      await saveData();
-      renderList(); updateDashboard(); generateDocNumber();
-      showAlert('✅ นำเข้าสำเร็จ ' + ok.length + ' ใบ' + (dup.length ? ' (ข้ามซ้ำ ' + dup.length + ' ใบ)' : ''));
-    } catch (e) {
-      console.error('importOldNCR:', e);
-      alert('นำเข้าไม่สำเร็จ: ' + e.message);
+    const parsed = [], failed = [];
+    for (let i = 0; i < files.length; i++) {
+      body.innerHTML = '⏳ กำลังอ่านไฟล์ ' + (i+1) + '/' + files.length + ' — ' + escapeHTML(files[i].name);
+      try { parsed.push(await _parseNCRFile(files[i])); }
+      catch (e) { console.warn('อ่าน ' + files[i].name + ' ไม่ได้:', e); failed.push(files[i].name + ' (' + e.message + ')'); }
     }
+
+    const existing = new Set(ncrList.map(n => n && n.id).filter(Boolean));
+    const seen = new Set();
+    parsed.forEach(r => {
+      if (!r.id) r._status = 'bad';
+      else if (existing.has(r.id) || seen.has(r.id)) r._status = 'dup';
+      else { r._status = 'ok'; seen.add(r.id); }
+    });
+    const okList = parsed.filter(r => r._status === 'ok');
+
+    const badge = st => st === 'ok' ? '<span style="color:var(--success)">✅ นำเข้า</span>'
+                     : st === 'dup' ? '<span style="color:var(--warning)">⏭️ ซ้ำ</span>'
+                     : '<span style="color:var(--danger)">❌ อ่านเลขไม่ได้</span>';
+    const td = v => '<td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:.8rem;vertical-align:top">' + v + '</td>';
+
+    body.innerHTML =
+      '<div style="font-size:1.05rem;font-weight:700;margin-bottom:6px">📚 ตรวจข้อมูลก่อนนำเข้า</div>'
+      + '<div style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">อ่านได้ ' + parsed.length + ' ไฟล์ · '
+      + '<b style="color:var(--success)">นำเข้าได้ ' + okList.length + '</b> · ซ้ำ ' + parsed.filter(r=>r._status==='dup').length
+      + ' · อ่านเลขไม่ได้ ' + parsed.filter(r=>r._status==='bad').length + (failed.length ? ' · เปิดไม่ได้ ' + failed.length : '') + '</div>'
+      + (failed.length ? '<div style="background:rgba(224,90,90,.12);border:1px solid var(--danger);border-radius:8px;padding:10px;margin-bottom:12px;font-size:.8rem;color:var(--danger)">เปิดไม่ได้: ' + failed.map(escapeHTML).join('<br>') + '</div>' : '')
+      + '<div style="overflow:auto;max-height:46vh;border:1px solid var(--border);border-radius:8px"><table style="width:100%;border-collapse:collapse">'
+      + '<thead><tr style="background:var(--surface2);position:sticky;top:0">'
+      + ['สถานะ','เลขที่','วันที่','บริษัท (Supplier)','แผนก','เรื่อง','รูป','หมายเหตุ']
+          .map(h => '<th style="padding:7px 8px;text-align:left;font-size:.78rem;white-space:nowrap">' + h + '</th>').join('')
+      + '</tr></thead><tbody>'
+      + parsed.map(r => '<tr>' + badge(r._status) .replace(/^/, '<td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:.8rem;white-space:nowrap">') + '</td>'
+          + td('<b>' + escapeHTML(r.id || r._rawId || '-') + '</b>')
+          + td(escapeHTML(r.date || '-'))
+          + td(escapeHTML(r.bp || '-'))
+          + td(escapeHTML(r.dept || '-'))
+          + td(escapeHTML((r.subject || '-').slice(0, 40)))
+          + td(r.images.length ? '🖼 ' + r.images.length : '-')
+          + td('<span style="color:var(--warning)">' + escapeHTML(r._warn.join(' / ')) + '</span>')
+        + '</tr>').join('')
+      + '</tbody></table></div>'
+      + '<div style="background:var(--surface2);border-radius:8px;padding:12px;margin-top:12px;font-size:.82rem;color:var(--text-muted)">'
+      + '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">'
+      + '<input type="checkbox" id="imp-close-all" checked> ตั้งสถานะใบที่นำเข้าทั้งหมดเป็น <b>“ปิดแล้ว”</b> (แนะนำ สำหรับใบเก่าที่จบไปแล้ว)</label>'
+      + '<div style="margin-top:6px">ถ้าไม่ติ๊ก ระบบจะดูจากข้อมูลในไฟล์เอง (มีผลตรวจติดตาม = ปิดแล้ว · มีสาเหตุ = รอตรวจติดตาม · ไม่มีเลย = รอตอบกลับ)</div></div>'
+      + '<div style="display:flex;gap:10px;margin-top:16px;justify-content:flex-end">'
+      + '<button class="btn btn-secondary btn-sm" onclick="document.getElementById(\'imp-modal\').remove()">ยกเลิก</button>'
+      + '<button class="btn btn-success btn-sm" id="imp-go"' + (okList.length ? '' : ' disabled') + '>💾 ยืนยันนำเข้า ' + okList.length + ' ใบ</button></div>';
+
+    const goBtn = document.getElementById('imp-go');
+    if (goBtn) goBtn.onclick = async () => {
+      goBtn.disabled = true; goBtn.textContent = '⏳ กำลังบันทึก...';
+      const closeAll = document.getElementById('imp-close-all').checked;
+      const nowIso = new Date().toISOString();
+      okList.forEach(r => {
+        const st = closeAll ? 'closed'
+                 : (r.auditResult ? 'closed' : (r.supplierReply ? 'waiting-audit' : 'waiting-reply'));
+        const n = {};
+        Object.keys(r).forEach(k => { if (k[0] !== '_') n[k] = r[k]; });
+        n.status = st;
+        if (st === 'closed') { n.closureResult = 'accept'; n.closureDate = n.closureDate || n.date; }
+        n.createdAt  = n.date ? n.date + 'T00:00:00.000Z' : nowIso;
+        n.updatedAt  = nowIso;
+        n.importedAt = nowIso;   // ทำเครื่องหมายว่าเป็นใบที่นำเข้าย้อนหลัง
+        ncrList.push(n);
+        markNCRDirty(n.id);
+      });
+      try {
+        await saveData();
+        document.getElementById('imp-modal').remove();
+        renderList(); updateDashboard(); generateDocNumber();
+        showAlert('✅ นำเข้าสำเร็จ ' + okList.length + ' ใบ');
+      } catch (e) {
+        goBtn.disabled = false; goBtn.textContent = '💾 ลองอีกครั้ง';
+        alert('บันทึกไม่สำเร็จ: ' + e.message);
+      }
+    };
   };
   inp.click();
 }
