@@ -5262,16 +5262,35 @@ document.addEventListener('click', function(e) {
                     return;
                 }
             }
+            // เฟส 3 (แก้บั๊ก): ต้องถาม "แหล่งจริง" ว่าเคยตอบไปหรือยัง
+            // เพราะหลังแยกก้อนข้อมูล ก้อนแชร์ไม่มีช่อง supplierReply และสถานะในก้อนแชร์
+            // จะยังไม่อัปเดตจนกว่าฝั่ง QC จะเปิดระบบ — เช็คจากก้อนแชร์อย่างเดียวจึงไม่พอ
+            let _prevReply = null;
+            if (replyToken) {
+                try {
+                    const _pq = await db.ref('ncr_system/supplier_reply').orderByChild('_token').equalTo(replyToken).once('value');
+                    if (_pq.exists()) {
+                        const _c = Object.values(_pq.val() || {}).filter(Boolean);
+                        _prevReply = _c[0] || null;
+                    }
+                } catch (pe) { console.warn('อ่านคำตอบเดิมไม่ได้:', pe.message); }
+            }
+
             // ล็อกหลังตอบครั้งแรก: ถ้า Supplier เคยส่งคำตอบแล้ว (มี supplierReply / status เลย waiting-reply)
             // และ QC ไม่ได้ตีกลับให้แก้ (returnRequested) → ปิดฟอร์ม แสดงหน้ายืนยันอย่างเดียว
             // ป้องกันกรณี Supplier ส่งลิงก์ต่อให้บุคคลที่ 3 มาแก้ทับคำตอบเดิม
             const _alreadyReplied = ncr && !ncr.returnRequested &&
-                (ncr.supplierReply || (ncr.status && ncr.status !== 'waiting-reply' && ncr.status !== 'open' && ncr.status !== 'pending-approval'));
+                ((_prevReply && _prevReply.supplierReply)
+                 || ncr.supplierReply
+                 || (ncr.status && ncr.status !== 'waiting-reply' && ncr.status !== 'open' && ncr.status !== 'pending-approval'));
             if (_alreadyReplied) {
                 const _fp4 = document.getElementById('page-new-ncr');
                 if (typeof showPage === 'function') showPage('new-ncr');
                 if (_fp4 && !document.getElementById('reply-status-msg')) {
-                    const _repliedWhen = ncr.supplierReplyDate ? ncr.supplierReplyDate.split('-').reverse().join('/') : (ncr.updatedAt ? new Date(ncr.updatedAt).toLocaleDateString('th-TH') : '-');
+                    const _rd = (_prevReply && _prevReply.supplierReplyDate) || ncr.supplierReplyDate || '';
+                    const _ru = (_prevReply && _prevReply.updatedAt) || ncr.updatedAt || '';
+                    const _repliedWhen = _rd ? _rd.split('-').reverse().join('/')
+                                             : (_ru ? new Date(_ru).toLocaleDateString('th-TH') : '-');
                     const _sm4 = document.createElement('div');
                     _sm4.id = 'reply-status-msg';
                     _sm4.style.cssText = 'text-align:center;padding:48px 24px;font-family:Sarabun,sans-serif';
@@ -5488,16 +5507,8 @@ document.addEventListener('click', function(e) {
                     // (ลิงก์ปกติ Supplier ต้องเจอฟอร์มเปล่า — ข้อมูลที่ QC เคยกรอกในขั้นตอนที่ 2 ต้องไม่โผล่มาให้เห็น)
                     if (ncr.returnRequested) {
                     try {
-                        let prev = null;
-                        try {
-                            // เฟส 2: Supplier อ่าน "คำตอบของตัวเอง" กลับมาได้ผ่าน query ด้วย token
-                            // (เดิมอ่านไม่ได้เลย จึงตกไปดึงจากใบ ทำให้ช่องที่ QC กรอกเองหลุดมาให้เห็น)
-                            const pq = await db.ref('ncr_system/supplier_reply').orderByChild('_token').equalTo(replyToken).once('value');
-                            if (pq.exists()) {
-                                const cand = Object.values(pq.val() || {}).filter(Boolean);
-                                prev = cand[0] || null;
-                            }
-                        } catch(pe) { console.warn('อ่านคำตอบเดิมไม่ได้:', pe.message); }
+                        // ใช้คำตอบเดิมที่อ่านมาแล้วตอนต้น ไม่ต้องอ่านซ้ำ
+                        const prev = _prevReply;
                         if (prev) {
                             const setV = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; };
                             const setC = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
