@@ -1305,6 +1305,26 @@
     </div>
   </div>
 
+  <!-- IMPORT OLD NCR -->
+  <div class="card" style="margin-top:20px;border:1px solid var(--warning)">
+    <div class="card-header"><div class="card-title">📚 นำเข้าใบ NCR ย้อนหลัง</div></div>
+    <p style="font-size:.85rem;color:var(--text-muted);margin-bottom:16px">
+      นำใบ NCR เก่าที่เคยบันทึกไว้ใน Excel เข้าระบบ เพื่อให้แดชบอร์ด สถิติ และการค้นหาย้อนหลังนับรวมของเก่าด้วย
+      — และทำให้เลขเอกสารใบใหม่รันต่อจากใบล่าสุดได้ถูกต้อง
+    </p>
+    <div class="btn-row" style="margin-bottom:16px">
+      <button class="btn btn-success btn-sm" onclick="downloadNCRTemplate()">📋 ดาวน์โหลด Template</button>
+      <button class="btn btn-warning btn-sm" onclick="importOldNCR()">📚 นำเข้าใบ NCR เก่า</button>
+    </div>
+    <div style="background:var(--surface2);border-radius:8px;padding:14px;font-size:.83rem;color:var(--text-muted)">
+      <strong style="color:var(--warning)">วิธีใช้:</strong><br>
+      1. กด <strong>ดาวน์โหลด Template</strong> → คัดลอกข้อมูลเก่าของคุณลงไป (เรียงคอลัมน์ยังไงก็ได้ ระบบดูจากชื่อหัวคอลัมน์)<br>
+      2. กด <strong>นำเข้าใบ NCR เก่า</strong> → ระบบจะสรุปให้ดูก่อนว่าจะนำเข้ากี่ใบ ข้ามกี่ใบ<br>
+      3. ต้องกดยืนยันอีกครั้งถึงจะบันทึกจริง<br>
+      <span style="color:var(--danger)">⚠️ ใบที่เลขที่ซ้ำกับในระบบจะถูกข้าม ไม่เขียนทับของเดิม</span>
+    </div>
+  </div>
+
   <!-- CONNECTION STATUS -->
   <div class="card" style="margin-top:20px;border:1px solid var(--success)">
     <div class="card-header"><div class="card-title">☁️ สถานะ Firebase</div></div>
@@ -2253,15 +2273,20 @@ function generateDocNumber() {
   const yr = now.getFullYear().toString().slice(-2);
   const typeEl = document.getElementById('doc-type');
   const prefix = typeEl ? typeEl.value : 'NCR';
-  // นับเฉพาะ NCR ที่ตรงประเภทและปีเดียวกัน
-  const count = ncrList.filter(n => {
-    if (!n.id) return false;
-    const idPrefix = n.id.startsWith('NCRW') ? 'NCRW' : 'NCR';
-    const idYr = n.id.split('/')[1];
-    return idPrefix === prefix && idYr === yr;
-  }).length;
-  // ตรวจสอบ uniqueness — ถ้า ID ซ้ำ ให้เพิ่มลำดับจนไม่ซ้ำ
-  let seq = count + 1;
+  // Bug fix: เดิมใช้วิธี "นับจำนวนใบ แล้ว +1" ซึ่งเพี้ยนทันทีที่เลขไม่ต่อเนื่อง
+  //   เช่น นำเข้าใบเก่า NCR010, NCR025, NCR048 → นับได้ 3 → ออกเลข NCR004 (ผิด)
+  //   หรือลบใบล่าสุดทิ้ง → เลขนั้นถูกนำกลับมาใช้ซ้ำ (ผิดหลัก ISO)
+  // ใหม่: หา "เลขสูงสุด" ของประเภทและปีเดียวกัน แล้ว +1
+  let maxSeq = 0;
+  ncrList.forEach(n => {
+    if (!n || !n.id) return;
+    const m = String(n.id).match(/^(NCRW|NCR)(\d+)\/(\d+)$/);
+    if (!m || m[1] !== prefix || m[3] !== yr) return;
+    const num = parseInt(m[2], 10);
+    if (num > maxSeq) maxSeq = num;
+  });
+  // กันเหนียวอีกชั้น — ถ้าเลขที่ได้ยังซ้ำ ให้ไล่ขึ้นจนกว่าจะว่าง
+  let seq = maxSeq + 1;
   let candidate = `${prefix}${String(seq).padStart(3,'0')}/${yr}`;
   while (ncrList.some(n => n.id === candidate)) {
     seq++;
@@ -3963,6 +3988,176 @@ async function deleteNCR(idx, expectId) {
   try { await saveData(); } catch(e) { console.warn('deleteNCR saveData:', e.message); }
   renderList();
   updateDashboard();
+}
+
+
+// ==================== นำเข้าใบ NCR ย้อนหลังจาก Excel ====================
+// ระบบจับคู่คอลัมน์จาก "ชื่อหัวคอลัมน์" ไม่ใช่ตำแหน่ง — เรียงคอลัมน์ยังไงก็ได้
+const _NCR_COLS = {
+  id:                 ['เลขที่เอกสาร','เลขที่','เลขที่ncr','ncrno','ncrno.','id','docno'],
+  date:               ['วันที่','วันที่ออกเอกสาร','date'],
+  bp:                 ['เรียน','เรียน(บริษัท/หน่วยงาน)','บริษัท','ผู้ขาย','supplier','bp'],
+  dept:               ['แผนก','dept','department'],
+  subject:            ['เรื่อง','subject'],
+  productCode:        ['รหัสสินค้า','productcode'],
+  ncName:             ['ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด','ชื่อสินค้า','item'],
+  ncType:             ['ประเภท','ประเภทของไม่เป็นไปตามข้อกำหนด','type'],
+  refDoc:             ['เลขที่ใบสั่งการผลิต','เอกสารอ้างอิง','refdoc','ref'],
+  defectDetail:       ['รายละเอียดข้อบกพร่อง','รายละเอียด','defect'],
+  supplierReply:      ['สาเหตุของปัญหา','สาเหตุ','rootcause'],
+  supplierCA:         ['การแก้ไข','correctiveaction','ca'],
+  supplierPreventive: ['การป้องกัน','preventiveaction','pa'],
+  auditResult:        ['ผลการตรวจติดตาม','ผลตรวจติดตาม','auditresult'],
+  reporter:           ['ผู้รายงาน','reporter'],
+  reviewer:           ['ผู้ทบทวน','reviewer'],
+  auditor:            ['ผู้ตรวจติดตาม','ผู้ตรวจ','auditor'],
+  status:             ['สถานะ','status'],
+  closureDate:        ['วันที่ปิด','closuredate'],
+  remark:             ['หมายเหตุ','remark','note'],
+};
+
+const _NCR_STATUS_MAP = {
+  'ปิดแล้ว':'closed','ปิด':'closed','closed':'closed','close':'closed',
+  'รออนุมัติ':'pending-approval','pendingapproval':'pending-approval','pending':'pending-approval',
+  'รอตอบกลับ':'waiting-reply','waitingreply':'waiting-reply','open':'waiting-reply',
+  'รอตรวจติดตาม':'waiting-audit','waitingaudit':'waiting-audit',
+};
+
+function _normHead(v) { return String(v == null ? '' : v).toLowerCase().replace(/[\s._\-()\/]/g, ''); }
+
+function _ymd(y, mo, d) {
+  if (y > 2400) y -= 543;   // ปี พ.ศ. → ค.ศ.
+  if (y < 100)  y += 2000;
+  return y + '-' + String(mo).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+}
+
+function _impDate(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (v instanceof Date && !isNaN(v)) return _ymd(v.getFullYear(), v.getMonth()+1, v.getDate());
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);            if (m) return _ymd(+m[1], +m[2], +m[3]);
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/); if (m) return _ymd(+m[3], +m[2], +m[1]);
+  return '';
+}
+
+// ทำให้เลขเอกสารอยู่ในรูปแบบมาตรฐาน เช่น ncr1/25 → NCR001/25
+function _normNcrId(v) {
+  const s = String(v == null ? '' : v).trim().toUpperCase().replace(/\s/g, '');
+  const m = s.match(/^(NCRW|NCR)[-\s]?(\d+)\s*[\/\-]\s*(\d{2,4})$/);
+  if (!m) return '';
+  let yr = m[3];
+  if (yr.length === 4) yr = (parseInt(yr,10) > 2400 ? parseInt(yr,10) - 543 : parseInt(yr,10)).toString().slice(-2);
+  return m[1] + String(parseInt(m[2],10)).padStart(3,'0') + '/' + yr;
+}
+
+function downloadNCRTemplate() {
+  const headers = ['เลขที่เอกสาร','วันที่','เรียน (บริษัท/หน่วยงาน)','แผนก','เรื่อง','รหัสสินค้า',
+                   'ชื่อสิ่งที่ไม่เป็นไปตามข้อกำหนด','เลขที่ใบสั่งการผลิต','รายละเอียดข้อบกพร่อง',
+                   'สาเหตุของปัญหา','การแก้ไข','การป้องกัน','ผลการตรวจติดตาม',
+                   'ผู้รายงาน','ผู้ทบทวน','ผู้ตรวจติดตาม','สถานะ','วันที่ปิด','หมายเหตุ'];
+  const example = ['NCR001/25','15/03/2025','บริษัท ตัวอย่าง จำกัด','จัดซื้อ','พบข้อบกพร่องของบรรจุภัณฑ์','PK-XXX-0001',
+                   'ฝากระป๋องแป้ง 20 g','P1234/25','ฝามีความมันบริเวณด้านนอก',
+                   'เครื่องปั๊มตั้งค่าไม่ถูกต้อง','ปรับตั้งเครื่องใหม่','เพิ่มจุดตรวจก่อนส่งมอบ','ตรวจแล้วไม่พบปัญหาซ้ำ',
+                   'นายวัชพล จำรัสชูเกียรติ','นายภาคภูมิ กนกพรเวโรจน์','นายภาคภูมิ กนกพรเวโรจน์','ปิดแล้ว','30/03/2025',''];
+  const note = ['* ลบแถวตัวอย่างนี้ก่อนนำเข้า | สถานะใส่ได้: ปิดแล้ว / รอตอบกลับ / รอตรวจติดตาม / รออนุมัติ (ถ้าเว้นว่าง = ปิดแล้ว)'];
+  const ws = XLSX.utils.aoa_to_sheet([headers, example, [], note]);
+  ws['!cols'] = headers.map(() => ({ wch: 24 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'ncr');
+  XLSX.writeFile(wb, 'NCR-import-template.xlsx');
+}
+
+async function importOldNCR() {
+  if (!isAdmin()) { showErrorToast('🔒 นำเข้าใบ NCR ย้อนหลังได้เฉพาะผู้ดูแลระบบ'); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.xlsx,.xls';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    try {
+      const wb   = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true });
+      const name = wb.SheetNames.find(n => _normHead(n) === 'ncr') || wb.SheetNames[0];
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '', raw: true });
+      if (!rows.length) { alert('ไม่พบข้อมูลในไฟล์'); return; }
+
+      // จับคู่ชื่อหัวคอลัมน์ → ฟิลด์ในระบบ
+      const headerMap = {};
+      Object.keys(_NCR_COLS).forEach(field => {
+        _NCR_COLS[field].forEach(alias => { headerMap[_normHead(alias)] = field; });
+      });
+
+      const ok = [], dup = [], bad = [], unknownHeads = new Set();
+      const existing = new Set(ncrList.map(n => n && n.id).filter(Boolean));
+      const nowIso = new Date().toISOString();
+
+      rows.forEach((row, i) => {
+        const rec = {};
+        Object.keys(row).forEach(k => {
+          const field = headerMap[_normHead(k)];
+          if (field) rec[field] = row[k];
+          else if (String(k).trim() && !String(k).startsWith('__EMPTY')) unknownHeads.add(String(k).trim());
+        });
+
+        const id = _normNcrId(rec.id);
+        if (!id) { if (String(rec.id || '').trim()) bad.push('แถว ' + (i + 2)); return; }
+        if (existing.has(id)) { dup.push(id); return; }
+        existing.add(id);
+
+        const st = _NCR_STATUS_MAP[_normHead(rec.status)] || 'closed';
+        const dt = _impDate(rec.date);
+        const n = {
+          id: id,
+          date: dt,
+          bp: String(rec.bp || '').trim(),
+          dept: String(rec.dept || '').trim(),
+          subject: String(rec.subject || '').trim(),
+          productCode: String(rec.productCode || '').trim(),
+          ncName: String(rec.ncName || '').trim(),
+          ncType: String(rec.ncType || '').trim(),
+          refDoc: String(rec.refDoc || '').trim(),
+          defectDetail: String(rec.defectDetail || '').trim(),
+          supplierReply: String(rec.supplierReply || '').trim(),
+          supplierCA: String(rec.supplierCA || '').trim(),
+          supplierPreventive: String(rec.supplierPreventive || '').trim(),
+          auditResult: String(rec.auditResult || '').trim(),
+          reporter: String(rec.reporter || '').trim(),
+          reviewer: String(rec.reviewer || '').trim(),
+          auditor: String(rec.auditor || '').trim(),
+          remark: String(rec.remark || '').trim(),
+          closureDate: _impDate(rec.closureDate),
+          status: st,
+          images: [],
+          createdAt: (dt ? dt + 'T00:00:00.000Z' : nowIso),
+          updatedAt: nowIso,
+          importedAt: nowIso,      // ทำเครื่องหมายว่าเป็นใบที่นำเข้าย้อนหลัง
+        };
+        if (st === 'closed') n.closureResult = 'accept';
+        ok.push(n);
+      });
+
+      let msg = '📊 ตรวจไฟล์แล้ว — พบ ' + rows.length + ' แถว\n\n'
+              + '✅ นำเข้าได้:            ' + ok.length + ' ใบ\n'
+              + '⏭️ ข้าม (เลขที่ซ้ำ):     ' + dup.length + ' ใบ\n'
+              + '❌ เลขที่อ่านไม่ออก:    ' + bad.length + ' แถว\n';
+      if (bad.length) msg += '\n   → ' + bad.slice(0, 6).join(', ') + (bad.length > 6 ? ' ...' : '') + '\n';
+      if (unknownHeads.size) msg += '\n⚠️ คอลัมน์ที่ระบบไม่รู้จัก (จะถูกข้าม):\n   ' + [...unknownHeads].slice(0, 6).join(', ') + '\n';
+      if (!ok.length) { alert(msg + '\nไม่มีใบที่นำเข้าได้'); return; }
+      msg += '\nยืนยันนำเข้า ' + ok.length + ' ใบ?';
+      if (!confirm(msg)) return;
+
+      // ใช้เส้นทางบันทึกปกติ (รายใบ) ไม่ใช่โหมดเขียนทั้งก้อน
+      // เพราะโหมดเขียนทั้งก้อนจะไปทับ ncr_shared ทั้งหมด ทำให้รูปและลิงก์ของใบเดิมหาย
+      ok.forEach(n => { ncrList.push(n); markNCRDirty(n.id); });
+      await saveData();
+      renderList(); updateDashboard(); generateDocNumber();
+      showAlert('✅ นำเข้าสำเร็จ ' + ok.length + ' ใบ' + (dup.length ? ' (ข้ามซ้ำ ' + dup.length + ' ใบ)' : ''));
+    } catch (e) {
+      console.error('importOldNCR:', e);
+      alert('นำเข้าไม่สำเร็จ: ' + e.message);
+    }
+  };
+  inp.click();
 }
 
 // ==================== PRINT ====================
