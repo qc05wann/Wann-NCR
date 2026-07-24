@@ -1529,25 +1529,29 @@ function buildShared(ncr) {
 
 // ── โหลดรูปเฉพาะตอนต้องใช้ (ก2) ─────────────────────────────
 // ตอน login ระบบดึงมาแค่ข้อความ ทำให้เปิดแอปเร็วคงที่ไม่ว่าจะมีกี่ใบ
-const _imgLoaded = new Set();
+// Bug fix (รูปไม่ขึ้น): เดิมจำแค่ว่า "โหลดแล้ว" แล้วไปหวังว่ารูปยังอยู่ในตัวรายการ
+// แต่ listenForChanges() สร้าง ncrList ขึ้นใหม่ทั้งชุดทุกครั้งที่ข้อมูลเปลี่ยน
+// ซึ่งรายการใหม่มาจาก ncr_list ที่ไม่มีรูป → รูปในหน่วยความจำหายแต่ระบบยังคิดว่าโหลดแล้ว
+// จึงต้องเก็บรูปไว้ในแคชแยก ไม่ผูกกับตัวรายการ
+const _imgCache = new Map();   // id -> array ของรูป
 
 async function ensureImages(ncr) {
   if (!ncr || !ncr.id) return [];
-  if (_imgLoaded.has(ncr.id)) return ncr.images || [];
+  if (_imgCache.has(ncr.id)) { ncr.images = _imgCache.get(ncr.id); return ncr.images; }
   try {
     const snap = await dbRef.ncrSharedItem(ncr.id).child('images').once('value');
     const v = snap.exists() ? snap.val() : [];
     ncr.images = Array.isArray(v) ? v.filter(Boolean) : Object.values(v || {}).filter(Boolean);
   } catch (e) {
     console.warn('โหลดรูปของ ' + ncr.id + ' ไม่สำเร็จ:', e.message);
-    ncr.images = ncr.images || [];
+    ncr.images = [];
   }
-  _imgLoaded.add(ncr.id);
+  _imgCache.set(ncr.id, ncr.images);
   return ncr.images;
 }
 
-// เรียกตอนบันทึก/ลบ เพื่อไม่ให้แคชค้างเป็นรูปเก่า
-function invalidateImages(id) { if (id) _imgLoaded.delete(id); }
+// เรียกตอนลบใบ เพื่อไม่ให้แคชค้าง
+function invalidateImages(id) { if (id) _imgCache.delete(id); }
 
 // สร้างรหัสลับ + วันหมดอายุชุดใหม่ให้ใบหนึ่ง (ผู้อนุมัติเท่านั้น — Rules บังคับอีกชั้น)
 async function issueReplyLink(ncr) {
@@ -1886,8 +1890,9 @@ async function saveData() {
         });
         // รูปเขียนเฉพาะตอนที่มีอยู่ในหน่วยความจำจริง (เพิ่งอัปโหลด หรือเพิ่งเปิดแก้ไข)
         if (Array.isArray(n.images)) {
-          patch['ncr_system/ncr_shared/' + k + '/images'] = n.images.filter(Boolean);
-          _imgLoaded.add(id);
+          const _imgs = n.images.filter(Boolean);
+          patch['ncr_system/ncr_shared/' + k + '/images'] = _imgs;
+          _imgCache.set(id, _imgs);
         }
       });
       if (Object.keys(patch).length) await db.ref().update(patch);
@@ -3888,7 +3893,7 @@ async function editNCR(idx, expectId) {
   const pageSubtitle = document.querySelector('#page-new-ncr .page-subtitle');
   if (pageTitle) pageTitle.textContent = '✏️ แก้ไข NCR';
   if (pageSubtitle) pageSubtitle.textContent = 'Non-Conformance Report - แก้ไขรายการ ' + n.id;
-  setTimeout(() => {
+  setTimeout(async () => {
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
     const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
     setVal('doc-number', n.id);
@@ -3924,10 +3929,13 @@ async function editNCR(idx, expectId) {
     setVal('remark', n.remark);
     setVal('ref-doc', n.refDoc);
     setVal('nc-name', n.ncName);
-    ensureImages(n).then(() => {   // เฟส 2 (ก2): ดึงรูปเข้าฟอร์มแก้ไข
-      uploadedImages = n.images ? [...n.images] : [];
-      renderImageGrid();
-    });
+    // เฟส 2 (ก2): ต้อง await ให้รูปมาถึงก่อน
+    // ถ้าไม่รอ แล้วผู้ใช้กดบันทึกก่อนรูปโหลดเสร็จ ระบบจะบันทึกว่า "ไม่มีรูป" ทับของเดิม
+    uploadedImages = [];
+    renderImageGrid();
+    await ensureImages(n);
+    uploadedImages = Array.isArray(n.images) ? [...n.images] : [];
+    renderImageGrid();
     // Bug #10 fix: อัปเดต label "เรียน" ตามประเภทเอกสาร
     updateBpLabel();
     // Bug #9 fix: filter subject ตาม nc-type ที่โหลดมา แล้ว restore ค่า
